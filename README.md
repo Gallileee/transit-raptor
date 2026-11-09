@@ -31,7 +31,15 @@ It is a learning project: [OpenTripPlanner](https://www.opentripplanner.org/) an
    only works if trips never overtake. Walking connections come from a spatial grid (stops
    within 300 m, at 1.2 m/s with a 1.3 detour factor, at least 60 s, plus 45 s for every level
    of height difference from `levels.txt`, i.e. escalators) and from `transfers.txt`.
-3. **RAPTOR** (`raptor.ts`), from Delling, Pajor & Werneck,
+3. **Changes inside stations** (`stations.ts`). Where the feed has `pathways.txt`, a station is
+   a directed graph: each platform's *boarding areas* (spots along the platform), corridor
+   nodes and entrances, joined by walkways, stairs, escalators (often one way) and elevators.
+   A change is the shortest path through it (Dijkstra with a binary heap): platform to platform,
+   or out through the best entrance to a stop on the street. Getting off, the time is the
+   *average* over the platform's boarding areas (one is wherever one's carriage stopped);
+   getting on, the *nearest* boarding area counts. A 45 s buffer is added for getting off and
+   on. These times replace the distance estimate in those stations, in both directions.
+4. **RAPTOR** (`raptor.ts`), from Delling, Pajor & Werneck,
    [*Round-Based Public Transit Routing*](https://www.microsoft.com/en-us/research/?p=162045)
    (Transportation Science, 2015). Round *k* finds the earliest arrival at every stop using at
    most *k* vehicles: scan every pattern that serves a stop improved in round *k − 1* (each
@@ -41,7 +49,7 @@ It is a learning project: [OpenTripPlanner](https://www.opentripplanner.org/) an
    Pareto-optimal but useless journeys are dropped: anything arriving more than
    max(30 min, the fastest travel time) after the fastest journey (otherwise "direct, by the
    first night bus" shows up next to a ten-minute metro ride).
-4. **Stop names** (`stops.ts`). "andel" finds every platform called "Anděl": names are compared
+5. **Stop names** (`stops.ts`). "andel" finds every platform called "Anděl": names are compared
    without case, diacritics or punctuation; a unique prefix also works.
 
 ## On real data
@@ -51,19 +59,26 @@ Prague's PID feed of 9 Nov 2026 (valid 9-22 Nov), on a laptop with Node 26:
 | | |
 |---|---|
 | Feed | 1.69 M stop times, 82 k trips, 20 k stops |
-| Loading one day | 1.3 s (52 k trips kept), timetable 0.1 s: 6,576 patterns, 60,750 footpaths |
-| Memory | 357 MB resident, 108 MB heap |
-| One query | 2-17 ms |
+| Loading one day | 1.3 s (52 k trips kept), timetable 0.2 s: 6,576 patterns, 61,152 footpaths |
+| Station graphs | 68 stations, 1,532 pathways, 2,922 changes, 0.1 s |
+| Memory | 361 MB resident, 109 MB heap |
+| One query | 2-15 ms |
 
 Compared with the official planner ([IDOS for PID](https://idos.cz/pid/spojeni/)) on Tuesday
-10 Nov 2026 at 08:00:
+10 Nov 2026, every vehicle and arrival time below is the same to the minute:
 
-- Anděl -> Muzeum: the same journey to the minute (metro B 08:00, Můstek 08:04, change about
-  3 min, metro A 08:09, Muzeum 08:10).
-- Anděl -> Letiště: the same direct bus 191 (08:00-08:49) and the same arrival via Zličín and bus
-  100 (08:44), though transit-raptor leaves on an earlier metro (see limitations). IDOS also
-  offers metro A + trolleybus 59 via Nádraží Veleslavín (08:41), which transit-raptor misses: it
-  estimates that change at almost 5 minutes, IDOS at about 2.
+| Journey | Both planners |
+|---|---|
+| Anděl -> Muzeum, 08:00 | metro B 08:00, Můstek 08:04, change ~3 min, metro A 08:09, Muzeum 08:10 |
+| Anděl -> Letiště, 08:00 | bus 191 08:00-08:49; metro B + bus 100 via Zličín, 08:44; metro B + A + trolleybus 59 via Můstek and Nádraží Veleslavín, 08:41 |
+| Dejvická -> Háje, 07:30 | metro A to Muzeum 07:37, change, metro C 07:41-07:58 |
+| Křižíkova -> I. P. Pavlova, 17:00 | tram to Florenc, metro C 17:08-17:12 |
+| Náměstí Míru -> Národní třída, 17:00 | tram 22 17:01-17:10; metro A, Můstek 17:04, change ~3 min, metro B 17:08-17:09 |
+
+The 45 s buffer is the one number not taken from the feed. The first three journeys bound it
+(29-55 s, see `stations.ts`); the last two were checked afterwards, with nothing changed. Where
+transit-raptor differs is the departure: with the same arrival it may take an earlier tram or
+metro than IDOS (Zličín, Křižíkova), because it doesn't search a time window yet.
 
 ## Stack
 
@@ -123,11 +138,12 @@ CLI, and checks its own workflow with [workflow-guard](https://github.com/Gallil
 - **Earliest arrival for one departure time.** It doesn't yet search a time range ("all
   connections between 8:00 and 9:00"), so it may leave earlier than needed when a later
   departure arrives at the same time (rRAPTOR does that; see next steps).
-- Walking is straight-line distance times a detour factor plus a penalty per level, not a
-  street network or the paths inside stations. The values are cautious on purpose: compared
-  with IDOS, no setting fits every station (Můstek needs 3 min for 86 m, Nádraží Veleslavín
-  2 min for 140 m and more levels), and a too-short change suggests a connection that fails.
-  `pathways.txt` is the real source (next steps).
+- Outside the 68 stations with pathways, walking is straight-line distance times a detour
+  factor plus a penalty per level, not a street network. Those values are cautious on purpose:
+  a too-short change suggests a connection that fails in reality.
+- Inside stations, walkways have no lengths or times in PID's feed, so their time is the
+  straight line between their ends at 1.2 m/s. Elevators, accessibility (`wheelchair_boarding`,
+  stairs-free routes) and signposted exits aren't used yet.
 - Footpaths aren't chained (one walk between two vehicles), as in the paper.
 - No real-time delays, fares, accessibility, or daylight-saving corrections (GTFS times are
   measured from "noon minus 12 h", which differs from midnight on the two DST days).

@@ -1,0 +1,8 @@
+pathway_id,from_stop_id,to_stop_id,pathway_mode,is_bidirectional,traversal_time,stair_count
+W1,M1A,N1,1,1,30,
+W2,M1B,N1,1,1,50,
+E1,N1,M2A,4,0,40,
+E2,M2A,N1,4,0,70,
+W3,M2A,M2B,1,1,20,
+S1,N1,GE,2,1,,-20
+X1,M1A,NOPE,1,1,5,

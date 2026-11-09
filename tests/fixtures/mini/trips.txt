@@ -10,3 +10,5 @@ L9,WK,L9a,Foxtrot North
 L10,WK,L10a,Echo
 L1,WK,L1b,Charlie
 L2,WK,L2b,"Delta, Náměstí"
+L11,WK,L11a,Gamma
+L12,WK,L12a,Echo

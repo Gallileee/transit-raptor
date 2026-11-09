@@ -10,7 +10,9 @@
  * Times of a pattern are one flat Int32Array: for trip t and stop position i,
  * times[(t * n + i) * 2] is the arrival and times[(t * n + i) * 2 + 1] the departure.
  */
+import { distanceMetres, METRES_PER_DEGREE } from "./geo.js";
 import type { Feed, Trip } from "./gtfs.js";
+import { DEFAULT_STATION, type StationOptions, stationTransfers } from "./stations.js";
 
 export interface Pattern {
   readonly index: number;
@@ -78,7 +80,11 @@ export function departure(p: Pattern, trip: number, position: number): number {
   return p.times[(trip * p.stops.length + position) * 2 + 1]!;
 }
 
-export function buildTimetable(feed: Feed, walk: WalkOptions = DEFAULT_WALK): Timetable {
+export function buildTimetable(
+  feed: Feed,
+  walk: WalkOptions = DEFAULT_WALK,
+  station: StationOptions = DEFAULT_STATION,
+): Timetable {
   const groups = new Map<string, Trip[]>();
   for (const trip of feed.trips) {
     const key = `${trip.routeId}|${trip.stops.join(",")}|${trip.canBoard.join("")}|${trip.canAlight.join("")}`;
@@ -98,7 +104,7 @@ export function buildTimetable(feed: Feed, walk: WalkOptions = DEFAULT_WALK): Ti
     p.stops.forEach((stop, position) => stopPatterns[stop]!.push({ pattern: p.index, position }));
   }
 
-  return { feed, patterns, stopPatterns, footpaths: buildFootpaths(feed, walk) };
+  return { feed, patterns, stopPatterns, footpaths: buildFootpaths(feed, walk, station) };
 }
 
 /** Split trips (sorted by first departure) into lanes in which no trip overtakes another. */
@@ -133,22 +139,15 @@ function makePattern(index: number, trips: Trip[]): Pattern {
   return { index, routeId: first.routeId, stops: first.stops, canBoard: first.canBoard, canAlight: first.canAlight, trips, times };
 }
 
-const METRES_PER_DEGREE = 111_320;
-
-/** Straight-line distance in metres (equirectangular: plenty accurate for a few hundred metres). */
-export function distanceMetres(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const x = (lon2 - lon1) * Math.cos(((lat1 + lat2) / 2) * (Math.PI / 180));
-  const y = lat2 - lat1;
-  return Math.sqrt(x * x + y * y) * METRES_PER_DEGREE;
-}
+export { distanceMetres } from "./geo.js";
 
 /**
  * Walking connections between stops: every pair closer than walk.maxMetres (found with a grid,
  * so it isn't a comparison of every stop with every other one), plus transfers.txt entries,
  * which win when they say a walk takes longer or shorter. A stop without a level counts as
- * street level (0).
+ * street level (0). Stations with pathways.txt get their changes from stations.ts instead.
  */
-function buildFootpaths(feed: Feed, walk: WalkOptions): Footpath[][] {
+function buildFootpaths(feed: Feed, walk: WalkOptions, station: StationOptions): Footpath[][] {
   const best = feed.stops.map(() => new Map<number, number>());
   const usable = feed.stops.filter((s) => s.locationType === 0 && Number.isFinite(s.lat) && Number.isFinite(s.lon));
 
@@ -185,6 +184,9 @@ function buildFootpaths(feed: Feed, walk: WalkOptions): Footpath[][] {
       }
     }
   }
+  // Inside stations with pathways.txt, the path through the station replaces the estimate from
+  // distance and levels (both ways: it can be shorter or longer). transfers.txt has the last word.
+  for (const t of stationTransfers(feed, walk, station)) best[t.from]!.set(t.to, t.seconds);
   for (const t of feed.transfers) {
     if (t.from !== t.to) best[t.from]!.set(t.to, t.seconds);
   }
