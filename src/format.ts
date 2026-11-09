@@ -28,7 +28,13 @@ function minutes(seconds: number): string {
 export function formatLeg(feed: Feed, leg: Leg): string {
   const span = `${formatClock(leg.departure)}–${formatClock(leg.arrival)}`;
   if (leg.kind === "walk") {
-    return `  ${span}  walk ${minutes(leg.arrival - leg.departure)}: ${stopLabel(feed, leg.from)} -> ${stopLabel(feed, leg.to)}`;
+    const from = feed.stops[leg.from]!;
+    const to = feed.stops[leg.to]!;
+    const where =
+      from.name === to.name && !from.platform && !to.platform
+        ? `change platforms at ${from.name}`
+        : `${stopLabel(feed, leg.from)} -> ${stopLabel(feed, leg.to)}`;
+    return `  ${span}  walk ${minutes(leg.arrival - leg.departure)}: ${where}`;
   }
   const route = feed.routes.get(leg.routeId);
   const mode = route ? (MODES[route.type] ?? "line") : "line";

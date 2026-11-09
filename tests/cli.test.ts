@@ -32,7 +32,7 @@ describe("cli", () => {
         "  08:08–08:15  bus 200 towards Delta, Náměstí: Bravo (2) -> Delta, Náměstí (1 stop)",
       ].join("\n"),
     );
-    expect(err).toMatch(/^Loaded 9 trips on 2026-11-10 \(\d+ patterns, 10 stops\) in \d+ ms; search \d+ ms$/);
+    expect(err).toMatch(/^Loaded 11 trips on 2026-11-10 \(\d+ patterns, 13 stops\) in \d+ ms; search \d+ ms$/);
   });
 
   it("defaults to now", async () => {

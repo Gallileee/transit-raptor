@@ -36,9 +36,30 @@ export interface WalkOptions {
   readonly detour: number;
   /** Shortest walk between two different stops, in seconds (stairs, crossing, finding the platform). */
   readonly minSeconds: number;
+  /**
+   * Extra seconds per level of height difference (levels.txt), for escalators and stairs: two
+   * metro platforms 90 m apart but two levels apart, like line A and B at Mustek, are a
+   * three-minute change, not one.
+   */
+  readonly secondsPerLevel: number;
 }
 
-export const DEFAULT_WALK: WalkOptions = { maxMetres: 300, speed: 1.2, detour: 1.3, minSeconds: 60 };
+/**
+ * Deliberately cautious. Compared with the official PID planner (IDOS) on 10 Nov 2026, no choice
+ * of these numbers matches every station: IDOS needs at least 3 min for Mustek B->A (86 m,
+ * 2 levels) but under 3 min for Nadrazi Veleslavin metro->trolleybus (140 m, 3 levels), the
+ * opposite of what distance and depth predict. IDOS uses times specific to each station.
+ * Erring long only hides a connection; erring short suggests a change that fails in reality,
+ * so these values err long (Mustek: 183 s, as IDOS; Veleslavin: 290 s, IDOS about 2 min).
+ * pathways.txt (corridors, escalators, stairs inside stations) is the real fix; see PROGRESS.md.
+ */
+export const DEFAULT_WALK: WalkOptions = {
+  maxMetres: 300,
+  speed: 1.2,
+  detour: 1.3,
+  minSeconds: 60,
+  secondsPerLevel: 45,
+};
 
 export interface Timetable {
   readonly feed: Feed;
@@ -124,7 +145,8 @@ export function distanceMetres(lat1: number, lon1: number, lat2: number, lon2: n
 /**
  * Walking connections between stops: every pair closer than walk.maxMetres (found with a grid,
  * so it isn't a comparison of every stop with every other one), plus transfers.txt entries,
- * which win when they say a walk takes longer or shorter.
+ * which win when they say a walk takes longer or shorter. A stop without a level counts as
+ * street level (0).
  */
 function buildFootpaths(feed: Feed, walk: WalkOptions): Footpath[][] {
   const best = feed.stops.map(() => new Map<number, number>());
@@ -155,7 +177,9 @@ function buildFootpaths(feed: Feed, walk: WalkOptions): Footpath[][] {
           const o = feed.stops[other]!;
           const metres = distanceMetres(stop.lat, stop.lon, o.lat, o.lon);
           if (metres > walk.maxMetres) continue;
-          const seconds = Math.max(walk.minSeconds, Math.ceil((metres * walk.detour) / walk.speed));
+          const levels = Math.abs((stop.level ?? 0) - (o.level ?? 0));
+          const seconds =
+            Math.max(walk.minSeconds, Math.ceil((metres * walk.detour) / walk.speed)) + levels * walk.secondsPerLevel;
           best[stop.index]!.set(other, seconds);
         }
       }

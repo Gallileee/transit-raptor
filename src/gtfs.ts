@@ -27,6 +27,8 @@ export interface Stop {
   /** location_type: 0 stop/platform, 1 station, 2 entrance, 3 node, 4 boarding area */
   readonly locationType: number;
   readonly platform: string;
+  /** level_index from levels.txt (0 = street, negative = underground), or undefined. */
+  readonly level: number | undefined;
 }
 
 export interface Route {
@@ -111,6 +113,16 @@ export async function loadFeed(dir: string, date: ServiceDate): Promise<Feed> {
     if (!existsSync(join(dir, file))) throw new FeedError(`${dir}: missing ${file} (is this an unzipped GTFS feed?)`);
   }
 
+  // Levels (optional): how deep each part of a station is, e.g. a metro platform at -4.
+  const levels = new Map<string, number>();
+  const levelsFile = join(dir, "levels.txt");
+  if (existsSync(levelsFile)) {
+    await readCsv(levelsFile, (row) => {
+      const index = Number(row("level_index"));
+      if (row("level_id") && Number.isFinite(index)) levels.set(row("level_id"), index);
+    });
+  }
+
   const stops: Stop[] = [];
   const stopById = new Map<string, number>();
   await readCsv(join(dir, "stops.txt"), (row) => {
@@ -124,6 +136,7 @@ export async function loadFeed(dir: string, date: ServiceDate): Promise<Feed> {
       parent: row("parent_station"),
       locationType: Number(row("location_type") || "0"),
       platform: row("platform_code"),
+      level: levels.get(row("level_id")),
     };
     stops.push(stop);
     stopById.set(stop.id, index);

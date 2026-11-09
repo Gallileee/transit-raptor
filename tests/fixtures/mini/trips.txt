@@ -8,3 +8,5 @@ L5,WK,L5night,"Delta, Náměstí"
 L8,WK,L8a,Charlie
 L9,WK,L9a,Foxtrot North
 L10,WK,L10a,Echo
+L1,WK,L1b,Charlie
+L2,WK,L2b,"Delta, Náměstí"

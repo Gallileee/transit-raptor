@@ -5,7 +5,8 @@
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { activeServices, loadFeed } from "../src/gtfs.js";
-import { plan, type Journey } from "../src/raptor.js";
+import { formatLeg } from "../src/format.js";
+import { plan, withoutDetours, type Journey } from "../src/raptor.js";
 import { normalize, StopIndex } from "../src/stops.js";
 import { parseClock, parseDate } from "../src/time.js";
 import { buildTimetable, distanceMetres } from "../src/timetable.js";
@@ -43,9 +44,9 @@ describe("loading", () => {
     const { feed } = await setup();
     // WK runs on a Tuesday; EXTRA only on 17 Nov. L5night runs today and (from Monday) after midnight.
     expect(feed.trips.map((t) => t.id).sort()).toEqual(
-      ["L10a", "L1a", "L2a", "L3express", "L3slow", "L5night", "L5night@prev", "L8a", "L9a"].sort(),
+      ["L10a", "L1a", "L1b", "L2a", "L2b", "L3express", "L3slow", "L5night", "L5night@prev", "L8a", "L9a"].sort(),
     );
-    expect(feed.stats.stopTimesRead).toBe(24);
+    expect(feed.stats.stopTimesRead).toBe(29);
   });
 
   it("applies calendar_dates: a removed day and an added service", async () => {
@@ -187,5 +188,51 @@ describe("stop names", () => {
     expect(index.find("bra")).toEqual({ kind: "ambiguous", names: ["Bravo", "Bravo Gate"] });
     expect(index.find("trot")).toEqual({ kind: "none", suggestions: ["Foxtrot North", "Foxtrot South"] });
     expect(index.find("zulu")).toEqual({ kind: "none", suggestions: [] });
+  });
+});
+
+describe("real-data fixes", () => {
+  it("adds time for every level between two stops (escalators)", async () => {
+    const { feed, timetable } = await setup();
+    const id = (s: string) => feed.stopById.get(s)!;
+    const stop = (s: string) => feed.stops[id(s)]!;
+    const walk = (from: string, to: string) => timetable.footpaths[id(from)]!.find((f) => f.to === id(to))?.seconds;
+    const flat = (a: string, b: string) =>
+      Math.max(60, Math.ceil((distanceMetres(stop(a).lat, stop(a).lon, stop(b).lat, stop(b).lon) * 1.3) / 1.2));
+    expect([stop("M1").level, stop("M2").level, stop("S").level]).toEqual([-2, -4, undefined]);
+    expect(walk("M1", "M2")).toBe(flat("M1", "M2") + 2 * 45); // two levels apart
+    expect(walk("S", "M1")).toBe(flat("S", "M1") + 2 * 45); // no level = street level
+    expect(walk("M2", "M1")).toBe(walk("M1", "M2"));
+  });
+
+  it("drops a direct journey that arrives hours after one with a change", async () => {
+    const { feed, query } = await setup();
+    // At 08:06 the only direct bus is the night bus at 23:55 (arr 24:30); with one change one
+    // arrives at 08:25. The night bus is Pareto-optimal (fewer changes) but useless.
+    const journeys = query("Alpha", "Delta", "08:06");
+    expect(journeys.map((j) => describeJourney(feed, j))).toEqual([
+      ["08:10 1 A->B1 08:15", "08:15 walk B1->B2 08:16", "08:18 200 B2->D 08:25"],
+    ]);
+  });
+
+  it("keeps slower journeys within max(30 min, the fastest travel time)", () => {
+    const j = (arrival: number, transfers: number) => ({ legs: [], departure: 0, arrival, transfers });
+    const at = (h: number, m = 0) => h * 3600 + m * 60;
+    // Fastest: 08:20 after leaving at 08:00 (20 min) -> slack 30 min -> up to 08:50.
+    expect(withoutDetours([j(at(8, 50), 0), j(at(8, 51), 0), j(at(8, 20), 1)], at(8)).map((x) => x.arrival)).toEqual([
+      at(8, 50),
+      at(8, 20),
+    ]);
+    // Fastest: 10:00 after 08:00 (2 h) -> slack 2 h -> up to 12:00.
+    expect(withoutDetours([j(at(12), 0), j(at(10), 2)], at(8)).length).toBe(2);
+    expect(withoutDetours([], at(8))).toEqual([]);
+  });
+
+  it("calls a walk between unnamed platforms of one stop a change", async () => {
+    const { feed } = await setup();
+    const id = (s: string) => feed.stopById.get(s)!;
+    const leg = { kind: "walk" as const, from: id("M1"), to: id("M2"), departure: 28800, arrival: 29000 };
+    expect(formatLeg(feed, leg)).toBe("  08:00–08:03  walk 3 min: change platforms at Gamma");
+    expect(formatLeg(feed, { ...leg, from: id("B1"), to: id("B2") })).toBe("  08:00–08:03  walk 3 min: Bravo (1) -> Bravo (2)");
   });
 });

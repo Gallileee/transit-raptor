@@ -215,7 +215,19 @@ export function plan(tt: Timetable, query: Query): Journey[] {
     bestSoFar = rounds[k]!.arrival[target]!;
     journeys.push(reconstruct(tt, rounds, k, target));
   }
-  return journeys;
+  return withoutDetours(journeys, query.departAt);
+}
+
+/**
+ * Drop journeys that are Pareto-optimal but useless: "direct, but arriving 17 hours later than
+ * with one change" (the first night bus). A journey is kept if it arrives at most
+ * max(30 min, the fastest journey's travel time) after the fastest one.
+ */
+export function withoutDetours(journeys: Journey[], departAt: number): Journey[] {
+  if (journeys.length === 0) return journeys;
+  const fastest = Math.min(...journeys.map((j) => j.arrival));
+  const slack = Math.max(30 * 60, fastest - departAt);
+  return journeys.filter((j) => j.arrival <= fastest + slack);
 }
 
 function reconstruct(tt: Timetable, rounds: Labels[], round: number, target: number): Journey {
