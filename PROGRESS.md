@@ -1,5 +1,46 @@
 # Progress log
 
+## 2026-11-09 (interactive): Milestone 4, a web page with a map
+
+Why: the owner picked it from the next steps. Until now the project was a command-line tool;
+a page where one types two stops and sees the journey on a map shows what it does in seconds,
+and running the planner as a server means the timetable is loaded once instead of per query.
+
+Acceptance criteria:
+- `transit-raptor serve` with a JSON API (plan, stop suggestions) and a page with a map.
+- The timetable of a date is loaded once and kept; memory stays bounded.
+- Clear 400s for bad input (with stop names to pick from), 404/405/503 where they belong.
+- Safe by default: localhost only, a fixed list of files, a CSP, no HTML built from data.
+- Works at phone width; checked in a real browser on the real feed.
+
+Done:
+- `service.ts`: `Planner` (load-once cache of the two most recently used dates, `stops`,
+  `plan`), `RequestError` with suggestions, `journeyJson` (names, times, line colours, and
+  the coordinates of every stop passed, taken from the trip).
+- `server.ts`: `createAppServer` on node:http; `/api/plan`, `/api/stops`, `/`, `/app.js`,
+  `/style.css`; CSP, `nosniff`, `no-referrer`; `cli.ts`: `serve --gtfs --port --host`, which
+  loads today's timetable before listening.
+- `gtfs.ts`: route_color / route_text_color, normalized to six hex digits or "".
+- `web/`: index.html, style.css (light and dark, a phone layout), app.js (suggestions as you
+  type, journeys list with line badges, Leaflet map, search in the URL, keyboard selection).
+- Tests: `server.test.ts` (22) through a real server on a free port. 91 in total. Version 0.4.0.
+
+Verified (Node 26):
+- `npm run typecheck` clean; `npm test`: 91 passed.
+- Mutation checks: no CSP header (1 test fails), colours not validated (1), only the ends of a
+  ride drawn (1), cache without a limit (1).
+- In the browser, on the real PID feed (launch config `transit-raptor-web`, port 8095):
+  Anděl -> Letiště shows the same three journeys as the CLI and IDOS, metro B yellow, A green,
+  trolleybus 59 purple on the map; "nadrazi" gives the list of stations, and a click on one
+  searches again. 2.1 s for a new date (loading), 50-190 ms after that. No console errors
+  except the expected 400 of that ambiguous-stop test.
+- Two bugs found in the browser and fixed: at phone width the panel was squeezed into a small
+  scrolling box with the button and the journeys hidden (the desktop layout pins the height to
+  the window; on a phone the page now scrolls as a whole); and the map could keep an old size
+  after the layout changed, so `fitBounds` cut the route off (`invalidateSize()` before
+  drawing). The cut-off route seen with an emulated 1280 px window was the emulation scaling
+  the page, not the page: at the pane's own size the route fits.
+
 ## 2026-11-09 (interactive): Milestone 3, rRAPTOR (journeys over a time window)
 
 Why: next step 1, picked by the owner. Plain RAPTOR leaves as early as possible from the given
@@ -169,7 +210,8 @@ Mutation checks: without the filter or without the level penalty, one test each 
 ## Next steps (in order)
 
 1. Step-free routes: skip stairs and escalators in the station graph, use elevators and
-   `wheelchair_boarding`, as an option of the planner.
-2. Load once, query many times: a small HTTP API (`/plan?from=&to=&time=`) and a web page with
-   a map (Leaflet), with the feed kept in memory.
+   `wheelchair_boarding`, as an option of the planner (and a checkbox on the page).
+2. Draw legs along the street with shapes.txt (3.3 M points: load only the shapes of the trips
+   shown).
 3. A binary cache of the loaded timetable for a date, so startup isn't parsing CSV every time.
+4. Browser tests for the page (Playwright), now that it does more than show results.

@@ -2,11 +2,15 @@
 
 A journey planner for public transport, built on the **RAPTOR** algorithm and real timetables
 in the **GTFS** format. Point it at Prague's PID timetable, name two stops, and it finds the
-connections: the fastest one for each number of transfers.
+connections: the fastest one for each number of transfers. On the command line, or on a web
+page with a map:
 
 ```
 $ transit-raptor plan --gtfs data/pid --from "Anděl" --to "Letiště" --time 08:00
+$ transit-raptor serve --gtfs data/pid          # http://127.0.0.1:8080/
 ```
+
+![The web page: three journeys from Anděl to the airport, the selected one on the map in the lines' own colours](docs/screenshot.jpg)
 
 ## Why
 
@@ -99,6 +103,11 @@ TypeScript 7 on Node 22+, no runtime dependencies. Vitest for tests. TypeScript 
 feed is a dozen record types whose fields are easy to mix up (a stop *index* vs a stop *id*, a
 time in seconds vs a `HH:MM:SS` string); strict types catch that at compile time.
 
+The web page is plain HTML, CSS and JavaScript (`web/`, no build step) with
+[Leaflet](https://leafletjs.com/) 1.9.4 from cdnjs (pinned, with subresource integrity) and
+OpenStreetMap tiles. The server is `node:http` (`src/server.ts`): three routes don't need a
+framework.
+
 ## Install and run
 
 Needs Node 22.12 or newer.
@@ -135,6 +144,29 @@ Alpha -> Delta, Náměstí, 2026-11-10
 
 Exit codes: `0` journeys found, `1` no journey, `2` bad input or feed.
 
+### The web page
+
+```bash
+node dist/bin.js serve --gtfs data/pid [--port 8080] [--host 127.0.0.1]
+```
+
+It loads today's timetable at start (about 1.5 s), keeps the two most recently used dates in
+memory (one day of Prague is ~360 MB), and serves:
+
+- `/`: a form (stop names suggested as you type), the journeys, and the selected journey on a
+  map, every leg in its line's colour from `routes.txt`, walks dashed. The search is kept in
+  the URL, so a result can be shared or bookmarked.
+- `GET /api/plan?from=&to=[&date=YYYY-MM-DD][&time=HH:MM][&window=MIN][&maxTransfers=N][&list=1]`:
+  the journeys as JSON, with names, times, line colours and the coordinates of every stop
+  passed (for drawing).
+- `GET /api/stops?q=TEXT[&date=]`: stop names for the suggestions.
+
+Bad input gets `400` with a message, and for an unknown or ambiguous stop a list of names to
+pick from; a feed that can't be loaded gets `503`. The server listens on 127.0.0.1 unless told
+otherwise, serves a fixed list of three files (no URL path reaches the file system), and sends a
+Content-Security-Policy that only allows cdnjs and the map tiles. The page writes everything it
+shows with `textContent`, and only uses a line colour if it is six hex digits.
+
 ## Tests
 
 ```bash
@@ -146,8 +178,13 @@ The tests run on a hand-made feed (`tests/fixtures/mini`) in which every part ex
 thing: a transfer with a walk between platforms, an express that overtakes a slower bus, a stop
 where the line doesn't pick up, a night bus past midnight (seen from the next day too), a public
 holiday from `calendar_dates.txt`, a walk that only `transfers.txt` allows, a stop with no times,
-quoted names with commas and a byte order mark. CI runs them on Node 22 and 24, runs the built
-CLI, and checks its own workflow with [workflow-guard](https://github.com/Gallileee/workflow-guard).
+quoted names with commas and a byte order mark. `server.test.ts` runs the HTTP server on a free
+port and calls it like a browser would (JSON shapes, errors, headers, paths outside the three
+files). CI runs them on Node 22 and 24, runs the built CLI, and checks its own workflow with
+[workflow-guard](https://github.com/Gallileee/workflow-guard).
+
+The page itself was checked by hand in a browser (desktop and phone width, light and dark): the
+three journeys to the airport, line colours on the map, suggestions for an ambiguous stop.
 
 ## Limitations
 
@@ -164,8 +201,12 @@ CLI, and checks its own workflow with [workflow-guard](https://github.com/Gallil
   measured from "noon minus 12 h", which differs from midnight on the two DST days).
 - Stops without times in `stop_times.txt` take the previous stop's departure instead of an
   interpolated time.
-- The whole day's timetable is loaded for every query (seconds for a city; a server would load
-  it once).
+- The CLI loads the day's timetable for every query (1.5 s for Prague); `serve` loads it once.
+- The web server is meant for one user on their own machine: no authentication, no rate
+  limiting, one process. Map tiles come straight from tile.openstreetmap.org, which is fine for
+  that but not for a public site (OSM's tile usage policy).
+- The page has no automated browser tests; the API under it does.
+- Legs are drawn as straight lines between stops, not along the street (shapes.txt isn't read).
 
 ## Data
 

@@ -37,6 +37,9 @@ export interface Route {
   readonly longName: string;
   /** route_type: 0 tram, 1 metro, 2 rail, 3 bus, 4 ferry, 7 funicular, ... */
   readonly type: number;
+  /** route_color / route_text_color as six hex digits, or "" when the feed has none. */
+  readonly color: string;
+  readonly textColor: string;
 }
 
 /** One trip on the query date. Times are seconds from midnight of the query date. */
@@ -166,6 +169,8 @@ export async function loadFeed(dir: string, date: ServiceDate): Promise<Feed> {
       shortName: row("route_short_name"),
       longName: row("route_long_name"),
       type: Number(row("route_type")),
+      color: hexColor(row("route_color")),
+      textColor: hexColor(row("route_text_color")),
     });
   });
 
@@ -251,6 +256,12 @@ export async function loadFeed(dir: string, date: ServiceDate): Promise<Feed> {
   }
 
   return { date, stops, stopById, routes, trips, transfers, pathways, stats: { stopTimesRead, tripsInFeed } };
+}
+
+/** "00a562" or "#00A562" -> "00A562"; anything else -> "". */
+function hexColor(text: string): string {
+  const match = /^#?([0-9a-fA-F]{6})$/.exec(text.trim());
+  return match ? match[1]!.toUpperCase() : "";
 }
 
 const FIELDS = 6;

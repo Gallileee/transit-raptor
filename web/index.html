@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>transit-raptor</title>
+    <meta name="description" content="Journeys on Prague's PID timetable, planned with the RAPTOR algorithm." />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css"
+      integrity="sha512-Zcn6bjR/8RZbLEpLIeOwNtzREBAJnUKESxces60Mpoj+2okopSAcSUIUOseddDm0cxnGQzxIR7vJgsLZbdLE3w=="
+      crossorigin="anonymous"
+      referrerpolicy="no-referrer"
+    />
+    <link rel="stylesheet" href="/style.css" />
+    <script
+      src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"
+      integrity="sha512-BwHfrr4c9kmRkLw6iXFdzcdWV/PGkVgiIyIWLLlTSXzWQzxuSg4DiQUCpauz/EWjgk5TYQqX/kvn9pG1NpYfqg=="
+      crossorigin="anonymous"
+      referrerpolicy="no-referrer"
+      defer
+    ></script>
+    <script src="/app.js" type="module"></script>
+  </head>
+  <body>
+    <main class="layout">
+      <section class="panel" aria-labelledby="title">
+        <header>
+          <h1 id="title">transit-raptor</h1>
+          <p class="lead">Journeys on Prague's public transport, planned with the RAPTOR algorithm.</p>
+        </header>
+
+        <form id="search" autocomplete="off">
+          <div class="stops">
+            <label for="from">From</label>
+            <input id="from" name="from" list="from-list" placeholder="e.g. Anděl" required />
+            <datalist id="from-list"></datalist>
+            <label for="to">To</label>
+            <input id="to" name="to" list="to-list" placeholder="e.g. Letiště" required />
+            <datalist id="to-list"></datalist>
+            <button type="button" id="swap" class="swap" aria-label="Swap from and to" title="Swap">⇅</button>
+          </div>
+          <div class="row">
+            <label>Date <input type="date" id="date" name="date" required /></label>
+            <label>Time <input type="time" id="time" name="time" required /></label>
+          </div>
+          <div class="row">
+            <label
+              >Leaving within
+              <select id="window" name="window">
+                <option value="0">as soon as possible</option>
+                <option value="30">30 min</option>
+                <option value="60" selected>1 hour</option>
+                <option value="120">2 hours</option>
+              </select>
+            </label>
+            <label class="check"><input type="checkbox" id="list" name="list" /> every journey</label>
+          </div>
+          <button type="submit" class="primary">Find journeys</button>
+        </form>
+
+        <p id="status" role="status" aria-live="polite"></p>
+        <div id="suggestions" class="suggestions" hidden></div>
+        <ol id="results" class="results"></ol>
+      </section>
+
+      <section id="map" class="map" aria-label="Map of the selected journey"></section>
+    </main>
+    <footer class="footer">
+      Timetable: <a href="https://pid.cz/o-systemu/opendata/">PID / ROPID</a>, CC BY 4.0 ·
+      <a href="https://github.com/Gallileee/transit-raptor">source</a>
+    </footer>
+  </body>
+</html>
