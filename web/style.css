@@ -1,0 +1,290 @@
+:root {
+  --bg: #f6f7f9;
+  --panel: #ffffff;
+  --text: #1c2430;
+  --muted: #5d6775;
+  --border: #dde2e8;
+  --accent: #0b5cad;
+  --accent-text: #ffffff;
+  --selected: #eaf2fb;
+  --error: #b42318;
+  --walk: #6b7280;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12161c;
+    --panel: #1a2029;
+    --text: #e6e9ee;
+    --muted: #9aa4b2;
+    --border: #2c3542;
+    --accent: #4c9ef5;
+    --accent-text: #0b1220;
+    --selected: #1f2f44;
+    --error: #ff8a80;
+    --walk: #9aa4b2;
+    color-scheme: dark;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  display: flex;
+  flex-direction: column;
+}
+
+a {
+  color: var(--accent);
+}
+
+.layout {
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(320px, 420px) 1fr;
+  min-height: 0;
+}
+
+.panel {
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  padding: 20px 18px;
+  overflow-y: auto;
+}
+
+h1 {
+  margin: 0;
+  font-size: 1.35rem;
+}
+
+.lead {
+  margin: 4px 0 16px;
+  color: var(--muted);
+}
+
+form {
+  display: grid;
+  gap: 12px;
+}
+
+.stops {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas:
+    "from-label swap"
+    "from swap"
+    "to-label swap"
+    "to swap";
+  gap: 4px 8px;
+}
+
+.stops label[for="from"] {
+  grid-area: from-label;
+}
+#from {
+  grid-area: from;
+}
+.stops label[for="to"] {
+  grid-area: to-label;
+}
+#to {
+  grid-area: to;
+}
+.swap {
+  grid-area: swap;
+  align-self: center;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: end;
+}
+
+label {
+  display: grid;
+  gap: 4px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+label.check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+}
+
+input,
+select,
+button {
+  font: inherit;
+  color: var(--text);
+}
+
+input:not([type="checkbox"]),
+select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  min-width: 0;
+}
+
+button {
+  border: 1px solid var(--border);
+  background: var(--panel);
+  border-radius: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+button.primary {
+  background: var(--accent);
+  color: var(--accent-text);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+.journey:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+#status {
+  min-height: 1.4em;
+  margin: 14px 0 6px;
+  color: var(--muted);
+}
+
+#status.error {
+  color: var(--error);
+}
+
+.suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.results {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.journey {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.journey[aria-selected="true"] {
+  background: var(--selected);
+  border-color: var(--accent);
+}
+
+.journey h2 {
+  font-size: 1rem;
+  margin: 0 0 6px;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.journey h2 .meta {
+  color: var(--muted);
+  font-weight: 400;
+  font-size: 0.85rem;
+}
+
+.legs {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 4px;
+  font-size: 0.9rem;
+}
+
+.leg {
+  display: grid;
+  grid-template-columns: 3.2em auto 1fr;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.leg .time {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.badge {
+  display: inline-block;
+  min-width: 2.2em;
+  text-align: center;
+  border-radius: 6px;
+  padding: 0 6px;
+  font-weight: 700;
+  font-size: 0.85rem;
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.badge.walk {
+  background: transparent;
+  color: var(--walk);
+  border: 1px dashed var(--walk);
+}
+
+.map {
+  min-height: 300px;
+}
+
+.footer {
+  padding: 6px 18px;
+  font-size: 0.8rem;
+  color: var(--muted);
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+}
+
+/* On a phone the page scrolls as a whole: the form and journeys first, the map below them.
+   (The desktop layout fixes the height to the window and scrolls the panel on its own.) */
+@media (max-width: 860px) {
+  html,
+  body {
+    height: auto;
+  }
+  .layout {
+    flex: none;
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 60vh;
+  }
+  .panel {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding: 16px;
+    overflow: visible;
+  }
+}
