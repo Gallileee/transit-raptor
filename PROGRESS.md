@@ -1,5 +1,42 @@
 # Progress log
 
+## 2026-11-09 (interactive): Milestone 3, rRAPTOR (journeys over a time window)
+
+Why: next step 1, picked by the owner. Plain RAPTOR leaves as early as possible from the given
+time; IDOS suggests the *latest* departure that still arrives as early. Two of the six journeys
+compared with IDOS differed only in that (Zličín: 7 min earlier; Křižíkova: 2 min).
+
+Acceptance criteria:
+- A profile over a window: no journey in it leaves earlier, arrives later and changes more often
+  than another one.
+- `plan` keeps its output (the best per number of transfers) but leaves as late as possible.
+- A direct journey must not be hidden by a later departure with more changes that arrives first.
+- CLI: `--window` (default 60 min) and `--list`; same arrivals as before for every old test.
+
+Done:
+- `raptor.ts` rewritten around `Search`: labels per round kept across runs; each run carries the
+  previous round's arrivals forward, scans, walks, and returns the journeys it improved.
+  `departureTimes` (departures from the origin and stops one can walk to, latest first, plus the
+  start time), `profile` (Pareto over departure, arrival, transfers; journeys after the window
+  only when there is nothing inside), `plan` (best per transfer count from the profile).
+- Pruning now compares with labels of the same round only (needed for three criteria).
+- CLI: `--window MIN`, `--list`; usage text explains both.
+- Tests: `range.test.ts` (12); the test feed got a second line 9 trip (08:23) that reaches the
+  same connection as the 08:20 one. 69 in total. Version 0.3.0.
+
+Verified locally (Node 26):
+- `npm run typecheck` clean; `npm test`: 69 passed, and the 57 earlier ones passed on the new
+  core before any new test was added.
+- Mutation checks: running departures earliest first fails 6 tests; pruning with the best
+  arrival over all rounds (the trap from the paper) fails 5. Two mutations survived at first:
+  one was a badly built mutation (it only looked at the last round, which a run often never
+  reaches); the other showed dead code, a "latest departure" tie-break in `plan` that the
+  profile already guarantees, so it was removed.
+- Real feed: Křižíkova -> I. P. Pavlova now equals IDOS (tram 24 at 17:02); via Zličín the metro
+  leaves at 08:05 instead of 08:00 (IDOS 08:07; the rest is the change estimate at Zličín, whose
+  pathways don't reach the platform). A query over 60 min takes 45-190 ms; `--list` for Anděl ->
+  Letiště at 08:00 gives 20 journeys.
+
 ## 2026-11-09 (interactive): Milestone 2, changes inside stations from pathways.txt
 
 Why: next step 2, picked by the owner. Milestone 1's walking model (distance + 45 s per level)
@@ -131,11 +168,8 @@ Mutation checks: without the filter or without the level penalty, one test each 
 
 ## Next steps (in order)
 
-1. rRAPTOR: all journeys departing within a time window (e.g. the next hour), so the planner
-   doesn't suggest leaving earlier than needed (Anděl -> Letiště via Zličín leaves 7 min early,
-   Křižíkova -> I. P. Pavlova 2 min).
-2. Step-free routes: skip stairs and escalators in the station graph, use elevators and
+1. Step-free routes: skip stairs and escalators in the station graph, use elevators and
    `wheelchair_boarding`, as an option of the planner.
-3. Load once, query many times: a small HTTP API (`/plan?from=&to=&time=`) and a web page with
+2. Load once, query many times: a small HTTP API (`/plan?from=&to=&time=`) and a web page with
    a map (Leaflet), with the feed kept in memory.
-4. A binary cache of the loaded timetable for a date, so startup isn't parsing CSV every time.
+3. A binary cache of the loaded timetable for a date, so startup isn't parsing CSV every time.

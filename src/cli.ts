@@ -1,5 +1,6 @@
 /**
- * transit-raptor plan  --gtfs DIR --from NAME --to NAME [--date YYYY-MM-DD] [--time HH:MM] [--max-transfers N]
+ * transit-raptor plan  --gtfs DIR --from NAME --to NAME [--date YYYY-MM-DD] [--time HH:MM]
+ *                      [--max-transfers N] [--window MIN] [--list]
  * transit-raptor stops --gtfs DIR --search TEXT
  *
  * Exit codes: 0 = journeys found (or stops listed), 1 = no journey, 2 = bad input or feed.
@@ -7,17 +8,20 @@
 import { parseArgs } from "node:util";
 import { formatJourney } from "./format.js";
 import { FeedError, loadFeed } from "./gtfs.js";
-import { plan } from "./raptor.js";
+import { type Journey, plan, profile } from "./raptor.js";
 import { StopIndex, type StopMatch } from "./stops.js";
 import { formatDate, parseClock, parseDate, type ServiceDate, TimeError } from "./time.js";
 import { buildTimetable } from "./timetable.js";
 
 const USAGE = `Usage:
-  transit-raptor plan  --gtfs DIR --from NAME --to NAME [--date YYYY-MM-DD] [--time HH:MM] [--max-transfers N]
+  transit-raptor plan  --gtfs DIR --from NAME --to NAME [--date YYYY-MM-DD] [--time HH:MM]
+                       [--max-transfers N] [--window MIN] [--list]
   transit-raptor stops --gtfs DIR --search TEXT
 
 DIR is an unzipped GTFS feed (e.g. data/pid after npm run fetch-pid).
-Date and time default to now (local time).`;
+Date and time default to now (local time).
+plan shows the fastest journey for each number of transfers, leaving as late as possible within
+--window minutes of --time (default 60). --list shows every journey worth taking in the window.`;
 
 class UsageError extends Error {}
 
@@ -55,6 +59,8 @@ async function run(argv: string[], io: Io): Promise<number> {
         date: { type: "string" },
         time: { type: "string" },
         "max-transfers": { type: "string", default: "4" },
+        window: { type: "string", default: "60" },
+        list: { type: "boolean", default: false },
         search: { type: "string" },
       },
       strict: true,
@@ -89,13 +95,18 @@ async function run(argv: string[], io: Io): Promise<number> {
   if (!Number.isInteger(maxTransfers) || maxTransfers < 0 || maxTransfers > 10) {
     throw new UsageError("--max-transfers must be a whole number from 0 to 10");
   }
+  const window = Number(values.window);
+  if (!Number.isInteger(window) || window < 0 || window > 24 * 60) {
+    throw new UsageError("--window must be a whole number of minutes from 0 to 1440");
+  }
   const departAt = values.time ? parseClock(values.time) : now.getHours() * 3600 + now.getMinutes() * 60;
   const from = resolve(index, values.from, "--from");
   const to = resolve(index, values.to, "--to");
 
   const timetable = buildTimetable(feed);
   const loaded = performance.now();
-  const journeys = plan(timetable, { from: from.stops, to: to.stops, departAt, maxTransfers });
+  const query = { from: from.stops, to: to.stops, departAt, maxTransfers, window: window * 60 };
+  const journeys: Journey[] = values.list ? profile(timetable, query) : plan(timetable, query);
   const searched = performance.now();
 
   io.err(

@@ -1,5 +1,5 @@
 /**
- * RAPTOR: Round-bAsed Public Transit Optimized Router.
+ * RAPTOR: Round-bAsed Public Transit Optimized Router, and its range variant rRAPTOR.
  *
  * Delling, Pajor, Werneck: "Round-Based Public Transit Routing", Transportation Science 49(3),
  * 2015 (ALENEX 2012). https://www.microsoft.com/en-us/research/?p=162045
@@ -14,8 +14,15 @@
  *   3. Walk: from every stop improved by a vehicle in this round, follow the footpaths.
  *
  * Because round k only uses arrivals of round k - 1, the result is one journey per number of
- * vehicles: "arrive 08:41 with 1 transfer, or 08:36 with 2". Keeping only those that arrive
- * earlier than every journey with fewer transfers gives the Pareto set over (arrival, transfers).
+ * vehicles: "arrive 08:41 with 1 transfer, or 08:36 with 2".
+ *
+ * rRAPTOR answers "all good journeys leaving between 08:00 and 09:00": it runs RAPTOR once for
+ * every departure from the origin in that window, from the latest to the earliest, *without
+ * resetting the labels*. Whatever a later departure reached stays as a bound, so an earlier
+ * departure only produces a journey where it arrives earlier, and each run prunes most of the
+ * network. The result is a profile: the Pareto set over a later departure, an earlier arrival
+ * and fewer transfers. For that to be right, a label is only compared with labels of its own
+ * round (a later departure with more vehicles must not hide an earlier one with fewer).
  */
 import type { Timetable } from "./timetable.js";
 import { arrival, departure } from "./timetable.js";
@@ -59,6 +66,11 @@ export interface Query {
   readonly departAt: number;
   /** At most this many changes between vehicles. */
   readonly maxTransfers: number;
+  /**
+   * Also consider departures up to this many seconds after departAt (rRAPTOR). With 0 (the
+   * default) the journeys leave as early as possible from departAt.
+   */
+  readonly window?: number;
 }
 
 const NONE = 0;
@@ -77,10 +89,9 @@ interface Labels {
   walkFrom: Int32Array;
 }
 
-function labels(n: number, previous?: Labels): Labels {
+function labels(n: number): Labels {
   return {
-    // Arrival times carry over: with k vehicles one is never later than with k - 1.
-    arrival: previous ? previous.arrival.slice() : new Float64Array(n).fill(Infinity),
+    arrival: new Float64Array(n).fill(Infinity),
     kind: new Uint8Array(n),
     pattern: new Int32Array(n).fill(-1),
     trip: new Int32Array(n).fill(-1),
@@ -103,117 +114,211 @@ function earliestTrip(tt: Timetable, p: number, position: number, time: number):
   return lo < pattern.trips.length ? lo : -1;
 }
 
-export function plan(tt: Timetable, query: Query): Journey[] {
-  const n = tt.feed.stops.length;
-  const targets = new Set(query.to);
-  if (query.from.length === 0 || targets.size === 0) return [];
-  if (query.from.some((s) => targets.has(s))) return [];
+/**
+ * The labels of one query, kept across runs: run(t) for a later t first, then earlier ones.
+ * Each run returns the journeys it improved: at most one per number of vehicles.
+ */
+export class Search {
+  private readonly rounds: Labels[];
+  private readonly targets: Set<number>;
 
-  const rounds: Labels[] = [labels(n)];
-  const best = new Float64Array(n).fill(Infinity);
-  let marked = new Set<number>();
-
-  // Round 0: being at the origin, and walking from there.
-  const start = rounds[0]!;
-  for (const s of query.from) {
-    start.arrival[s] = query.departAt;
-    start.kind[s] = ORIGIN;
-    best[s] = query.departAt;
-    marked.add(s);
-  }
-  for (const s of query.from) {
-    for (const { to, seconds } of tt.footpaths[s]!) {
-      const t = query.departAt + seconds;
-      if (t < best[to]!) {
-        start.arrival[to] = t;
-        start.kind[to] = WALK;
-        start.walkFrom[to] = s;
-        best[to] = t;
-        marked.add(to);
-      }
-    }
+  constructor(
+    private readonly tt: Timetable,
+    private readonly query: Query,
+  ) {
+    const n = tt.feed.stops.length;
+    this.rounds = Array.from({ length: query.maxTransfers + 2 }, () => labels(n));
+    this.targets = new Set(query.to);
   }
 
-  const bestAtTarget = (): number => Math.min(...[...targets].map((s) => best[s]!));
+  run(departAt: number): Journey[] {
+    const { tt, query, rounds, targets } = this;
+    if (query.from.length === 0 || targets.size === 0 || query.from.some((s) => targets.has(s))) return [];
+    const n = tt.feed.stops.length;
+    let marked = new Set<number>();
 
-  for (let k = 1; k <= query.maxTransfers + 1 && marked.size > 0; k++) {
-    const previous = rounds[k - 1]!;
-    const current = labels(n, previous);
-    rounds.push(current);
-
-    // 1. Each pattern serving an improved stop, from its first such stop.
-    const queue = new Map<number, number>();
-    for (const stop of marked) {
-      for (const { pattern, position } of tt.stopPatterns[stop]!) {
-        const known = queue.get(pattern);
-        if (known === undefined || position < known) queue.set(pattern, position);
+    // Round 0: being at the origin, and walking from there.
+    const start = rounds[0]!;
+    for (const s of query.from) {
+      if (departAt < start.arrival[s]!) {
+        start.arrival[s] = departAt;
+        start.kind[s] = ORIGIN;
+        marked.add(s);
       }
     }
-    marked = new Set();
-
-    // 2. Scan the patterns.
-    let targetBound = bestAtTarget();
-    for (const [p, from] of queue) {
-      const pattern = tt.patterns[p]!;
-      let trip = -1;
-      let boardPosition = -1;
-      for (let i = from; i < pattern.stops.length; i++) {
-        const stop = pattern.stops[i]!;
-        if (trip >= 0 && pattern.canAlight[i]) {
-          const t = arrival(pattern, trip, i);
-          // Target pruning: an arrival later than the best known at the destination is useless.
-          if (t < best[stop]! && t < targetBound) {
-            current.arrival[stop] = t;
-            current.kind[stop] = RIDE;
-            current.pattern[stop] = p;
-            current.trip[stop] = trip;
-            current.boardPosition[stop] = boardPosition;
-            current.alightPosition[stop] = i;
-            best[stop] = t;
-            marked.add(stop);
-            if (targets.has(stop)) targetBound = Math.min(targetBound, t);
-          }
-        }
-        // Could an earlier trip be caught here, having arrived in the previous round?
-        const ready = previous.arrival[stop]!;
-        if (pattern.canBoard[i] && ready < Infinity && (trip < 0 || ready <= departure(pattern, trip, i))) {
-          const earlier = earliestTrip(tt, p, i, ready);
-          if (earlier >= 0 && (trip < 0 || earlier < trip)) {
-            trip = earlier;
-            boardPosition = i;
-          }
-        }
-      }
-    }
-
-    // 3. Walk from the stops a vehicle improved (one walk at a time, not chains of walks).
-    targetBound = bestAtTarget();
-    for (const stop of [...marked]) {
-      for (const { to, seconds } of tt.footpaths[stop]!) {
-        const t = current.arrival[stop]! + seconds;
-        if (t < best[to]! && t < targetBound) {
-          current.arrival[to] = t;
-          current.kind[to] = WALK;
-          current.walkFrom[to] = stop;
-          best[to] = t;
+    for (const s of query.from) {
+      for (const { to, seconds } of tt.footpaths[s]!) {
+        const t = departAt + seconds;
+        if (t < start.arrival[to]!) {
+          start.arrival[to] = t;
+          start.kind[to] = WALK;
+          start.walkFrom[to] = s;
           marked.add(to);
         }
       }
     }
+
+    const improvedRounds: number[] = [];
+    for (let k = 1; k < rounds.length && marked.size > 0; k++) {
+      const previous = rounds[k - 1]!;
+      const current = rounds[k]!;
+      // With k vehicles one is never later than with k - 1.
+      for (let p = 0; p < n; p++) {
+        if (previous.arrival[p]! < current.arrival[p]!) {
+          current.arrival[p] = previous.arrival[p]!;
+          current.kind[p] = NONE;
+        }
+      }
+      const targetBefore = this.bestTarget(current);
+
+      // 1. Each pattern serving an improved stop, from its first such stop.
+      const queue = new Map<number, number>();
+      for (const stop of marked) {
+        for (const { pattern, position } of tt.stopPatterns[stop]!) {
+          const known = queue.get(pattern);
+          if (known === undefined || position < known) queue.set(pattern, position);
+        }
+      }
+      marked = new Set();
+
+      // 2. Scan the patterns. Target pruning: an arrival no earlier than the best known at the
+      // destination (in this round) can't lead to a better journey.
+      let targetBound = targetBefore;
+      for (const [p, from] of queue) {
+        const pattern = tt.patterns[p]!;
+        let trip = -1;
+        let boardPosition = -1;
+        for (let i = from; i < pattern.stops.length; i++) {
+          const stop = pattern.stops[i]!;
+          if (trip >= 0 && pattern.canAlight[i]) {
+            const t = arrival(pattern, trip, i);
+            if (t < current.arrival[stop]! && t < targetBound) {
+              current.arrival[stop] = t;
+              current.kind[stop] = RIDE;
+              current.pattern[stop] = p;
+              current.trip[stop] = trip;
+              current.boardPosition[stop] = boardPosition;
+              current.alightPosition[stop] = i;
+              marked.add(stop);
+              if (targets.has(stop)) targetBound = Math.min(targetBound, t);
+            }
+          }
+          // Could an earlier trip be caught here, having arrived in the previous round?
+          const ready = previous.arrival[stop]!;
+          if (pattern.canBoard[i] && ready < Infinity && (trip < 0 || ready <= departure(pattern, trip, i))) {
+            const earlier = earliestTrip(tt, p, i, ready);
+            if (earlier >= 0 && (trip < 0 || earlier < trip)) {
+              trip = earlier;
+              boardPosition = i;
+            }
+          }
+        }
+      }
+
+      // 3. Walk from the stops a vehicle improved (one walk at a time, not chains of walks).
+      for (const stop of [...marked]) {
+        for (const { to, seconds } of tt.footpaths[stop]!) {
+          const t = current.arrival[stop]! + seconds;
+          if (t < current.arrival[to]! && t < targetBound) {
+            current.arrival[to] = t;
+            current.kind[to] = WALK;
+            current.walkFrom[to] = stop;
+            marked.add(to);
+            if (targets.has(to)) targetBound = Math.min(targetBound, t);
+          }
+        }
+      }
+      if (this.bestTarget(current) < targetBefore) improvedRounds.push(k);
+    }
+
+    return improvedRounds.map((k) => reconstruct(tt, rounds, k, this.bestTargetStop(rounds[k]!)));
   }
 
-  // One journey per round that beats every round with fewer vehicles.
+  private bestTarget(l: Labels): number {
+    let best = Infinity;
+    for (const s of this.targets) best = Math.min(best, l.arrival[s]!);
+    return best;
+  }
+
+  private bestTargetStop(l: Labels): number {
+    let best = -1;
+    for (const s of this.targets) if (best < 0 || l.arrival[s]! < l.arrival[best]!) best = s;
+    return best;
+  }
+}
+
+/**
+ * The times worth starting at: every departure in [departAt, departAt + window] from an origin
+ * stop, or from a stop one can walk to from there (minus the walk), latest first. departAt itself
+ * comes last, so the next journey is found even when nothing leaves in the window.
+ */
+export function departureTimes(tt: Timetable, query: Query): number[] {
+  const from = query.departAt;
+  const until = from + (query.window ?? 0);
+  const times = new Set<number>([from]);
+  const add = (stop: number, walk: number) => {
+    for (const { pattern, position } of tt.stopPatterns[stop]!) {
+      const p = tt.patterns[pattern]!;
+      if (!p.canBoard[position]) continue;
+      for (let t = 0; t < p.trips.length; t++) {
+        const leave = departure(p, t, position) - walk;
+        if (leave >= from && leave <= until) times.add(leave);
+      }
+    }
+  };
+  for (const s of query.from) {
+    add(s, 0);
+    for (const { to, seconds } of tt.footpaths[s]!) add(to, seconds);
+  }
+  return [...times].sort((a, b) => b - a);
+}
+
+/** True if `a` is at least as good as `b` in departure, arrival and transfers, and better in one. */
+function dominates(a: Journey, b: Journey): boolean {
+  const asGood = a.departure >= b.departure && a.arrival <= b.arrival && a.transfers <= b.transfers;
+  const better = a.departure > b.departure || a.arrival < b.arrival || a.transfers < b.transfers;
+  return asGood && better;
+}
+
+/**
+ * Every journey worth taking in the window: none leaves earlier, arrives later and changes more
+ * often than another one. Sorted by departure. Journeys leaving after the window are only kept
+ * when nothing leaves inside it.
+ */
+export function profile(tt: Timetable, query: Query): Journey[] {
+  const search = new Search(tt, query);
+  const found: Journey[] = [];
+  for (const t of departureTimes(tt, query)) found.push(...search.run(t));
+  const pareto = found.filter((j, i) => !found.some((other, o) => (o !== i && dominates(other, j)) || (o < i && same(other, j))));
+  const until = query.departAt + (query.window ?? 0);
+  const inside = pareto.filter((j) => j.departure <= until);
+  return (inside.length > 0 ? inside : pareto).sort((a, b) => a.departure - b.departure || a.arrival - b.arrival);
+}
+
+function same(a: Journey, b: Journey): boolean {
+  return a.departure === b.departure && a.arrival === b.arrival && a.transfers === b.transfers;
+}
+
+/**
+ * The best journey for each number of transfers that beats every journey with fewer: the
+ * earliest arrival. With a window, it also leaves as late as possible: the profile has already
+ * dropped every journey that arrives at the same time but leaves earlier (it is dominated), so
+ * one isn't told to leave earlier than needed. Useless detours are dropped (see withoutDetours).
+ */
+export function plan(tt: Timetable, query: Query): Journey[] {
+  const candidates = (query.window ?? 0) > 0 ? profile(tt, query) : new Search(tt, query).run(query.departAt);
+  const byTransfers = new Map<number, Journey>();
+  for (const j of candidates) {
+    const known = byTransfers.get(j.transfers);
+    if (!known || j.arrival < known.arrival) byTransfers.set(j.transfers, j);
+  }
   const journeys: Journey[] = [];
   let bestSoFar = Infinity;
-  for (let k = 1; k < rounds.length; k++) {
-    let target = -1;
-    for (const s of targets) {
-      const t = rounds[k]!.arrival[s]!;
-      if (t < bestSoFar && (target < 0 || t < rounds[k]!.arrival[target]!)) target = s;
+  for (const j of [...byTransfers.values()].sort((a, b) => a.transfers - b.transfers)) {
+    if (j.arrival < bestSoFar) {
+      journeys.push(j);
+      bestSoFar = j.arrival;
     }
-    if (target < 0) continue;
-    bestSoFar = rounds[k]!.arrival[target]!;
-    journeys.push(reconstruct(tt, rounds, k, target));
   }
   return withoutDetours(journeys, query.departAt);
 }
