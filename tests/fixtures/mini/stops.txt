@@ -1,0 +1,11 @@
+﻿stop_id,stop_name,stop_lat,stop_lon,location_type,parent_station,platform_code
+A,Alpha,50.0000,14.0000,0,,
+B1,Bravo,50.0100,14.0000,0,P,1
+B2,Bravo,50.0101,14.0010,0,P,2
+P,Bravo,50.01005,14.0005,1,,
+G,Bravo Gate,50.0102,14.0015,0,,
+C,Charlie,50.0200,14.0000,0,,
+D,"Delta, Náměstí",50.0300,14.0000,0,,
+E,Echo,50.0500,14.0300,0,,
+F1,Foxtrot North,50.0400,14.0000,0,,
+F2,Foxtrot South,50.0450,14.0000,0,,
