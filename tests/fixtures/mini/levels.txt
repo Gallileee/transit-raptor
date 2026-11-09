@@ -1,0 +1,4 @@
+level_id,level_index,level_name
+GL0,0,Street
+GL2,-2,"Platform, line 1"
+GL4,-4,Platform line 2

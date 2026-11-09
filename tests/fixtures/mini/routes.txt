@@ -1,0 +1,8 @@
+route_id,route_short_name,route_long_name,route_type
+L1,1,,0
+L2,200,,3
+L3,300,,3
+L5,905,,3
+L8,8,,0
+L9,9,,0
+L10,10,,0
