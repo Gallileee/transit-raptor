@@ -49,7 +49,17 @@ It is a learning project: [OpenTripPlanner](https://www.opentripplanner.org/) an
    Pareto-optimal but useless journeys are dropped: anything arriving more than
    max(30 min, the fastest travel time) after the fastest journey (otherwise "direct, by the
    first night bus" shows up next to a ten-minute metro ride).
-5. **Stop names** (`stops.ts`). "andel" finds every platform called "Anděl": names are compared
+5. **rRAPTOR** (range queries, from the same paper). "Leaving at 8:00" really means "around
+   8:00": RAPTOR alone takes the first vehicle that leaves, even when a later one arrives just
+   as early. rRAPTOR runs RAPTOR for every departure from the origin in a window (default 60
+   min), from the latest to the earliest, without resetting the labels: what a later departure
+   reached stays as a bound, so an earlier one only counts where it arrives earlier, and most of
+   the network is pruned. The result is a *profile*: every journey not beaten in departure,
+   arrival and transfers at once. `plan` picks the fastest per number of transfers from it,
+   which now also leaves as late as possible; `--list` shows the whole profile. One subtlety
+   from the paper: a label may only be compared with labels of its own round, or a later
+   departure with more changes would hide an earlier direct one (there is a test for that).
+6. **Stop names** (`stops.ts`). "andel" finds every platform called "Anděl": names are compared
    without case, diacritics or punctuation; a unique prefix also works.
 
 ## On real data
@@ -62,7 +72,7 @@ Prague's PID feed of 9 Nov 2026 (valid 9-22 Nov), on a laptop with Node 26:
 | Loading one day | 1.3 s (52 k trips kept), timetable 0.2 s: 6,576 patterns, 61,152 footpaths |
 | Station graphs | 68 stations, 1,532 pathways, 2,922 changes, 0.1 s |
 | Memory | 361 MB resident, 109 MB heap |
-| One query | 2-15 ms |
+| One query | 2-15 ms for one departure; 45-190 ms over a 60-minute window (rRAPTOR) |
 
 Compared with the official planner ([IDOS for PID](https://idos.cz/pid/spojeni/)) on Tuesday
 10 Nov 2026, every vehicle and arrival time below is the same to the minute:
@@ -70,15 +80,18 @@ Compared with the official planner ([IDOS for PID](https://idos.cz/pid/spojeni/)
 | Journey | Both planners |
 |---|---|
 | Anděl -> Muzeum, 08:00 | metro B 08:00, Můstek 08:04, change ~3 min, metro A 08:09, Muzeum 08:10 |
-| Anděl -> Letiště, 08:00 | bus 191 08:00-08:49; metro B + bus 100 via Zličín, 08:44; metro B + A + trolleybus 59 via Můstek and Nádraží Veleslavín, 08:41 |
+| Anděl -> Letiště, 08:00 | bus 191 08:00-08:49; metro B + bus 100 via Zličín, 08:44 (see below); metro B + A + trolleybus 59 via Můstek and Nádraží Veleslavín, 08:41 |
 | Dejvická -> Háje, 07:30 | metro A to Muzeum 07:37, change, metro C 07:41-07:58 |
-| Křižíkova -> I. P. Pavlova, 17:00 | tram to Florenc, metro C 17:08-17:12 |
+| Křižíkova -> I. P. Pavlova, 17:00 | tram 24 17:02 to Florenc 17:05, metro C 17:08-17:12 |
 | Náměstí Míru -> Národní třída, 17:00 | tram 22 17:01-17:10; metro A, Můstek 17:04, change ~3 min, metro B 17:08-17:09 |
 
 The 45 s buffer is the one number not taken from the feed. The first three journeys bound it
-(29-55 s, see `stations.ts`); the last two were checked afterwards, with nothing changed. Where
-transit-raptor differs is the departure: with the same arrival it may take an earlier tram or
-metro than IDOS (Zličín, Křižíkova), because it doesn't search a time window yet.
+(29-55 s, see `stations.ts`); the last two were checked afterwards, with nothing changed.
+
+One difference is left: via Zličín, IDOS takes metro B at 08:07 and changes to bus 100 in
+about 2 minutes; transit-raptor leaves at 08:05, because its estimate for that change is 3:29.
+Zličín's few pathways don't reach the metro platform, so the distance estimate is used there.
+(Before rRAPTOR it left at 08:00, and at 17:00 for Křižíkova instead of 17:02.)
 
 ## Stack
 
@@ -99,11 +112,14 @@ npm run build
 npm run fetch-pid          # downloads Prague's timetable (~50 MB) into data/pid
 node dist/bin.js plan --gtfs data/pid --from "Anděl" --to "Muzeum" --time 8:00
 node dist/bin.js plan --gtfs data/pid --from "Anděl" --to "Muzeum" --date 2026-11-14 --max-transfers 1
+node dist/bin.js plan --gtfs data/pid --from "Anděl" --to "Letiště" --time 8:00 --list   # the next hour
 node dist/bin.js stops --gtfs data/pid --search "nadrazi"
 ```
 
-`--date` and `--time` default to now. Any other unzipped GTFS feed works too: pass its folder as
-`--gtfs`. Example output on the test feed:
+`--date` and `--time` default to now. `--window MIN` (default 60) is how far after `--time`
+departures are considered; `--window 0` leaves as early as possible. `--list` prints every
+journey worth taking in the window instead of the best per number of transfers. Any other
+unzipped GTFS feed works too: pass its folder as `--gtfs`. Example output on the test feed:
 
 ```
 Alpha -> Delta, Náměstí, 2026-11-10
@@ -135,9 +151,8 @@ CLI, and checks its own workflow with [workflow-guard](https://github.com/Gallil
 
 ## Limitations
 
-- **Earliest arrival for one departure time.** It doesn't yet search a time range ("all
-  connections between 8:00 and 9:00"), so it may leave earlier than needed when a later
-  departure arrives at the same time (rRAPTOR does that; see next steps).
+- rRAPTOR runs RAPTOR once per departure in the window; for a busy stop and a long window that
+  is hundreds of runs (still well under a second for Prague, but not for a whole day).
 - Outside the 68 stations with pathways, walking is straight-line distance times a detour
   factor plus a penalty per level, not a street network. Those values are cautious on purpose:
   a too-short change suggests a connection that fails in reality.

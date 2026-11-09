@@ -44,9 +44,9 @@ describe("loading", () => {
     const { feed } = await setup();
     // WK runs on a Tuesday; EXTRA only on 17 Nov. L5night runs today and (from Monday) after midnight.
     expect(feed.trips.map((t) => t.id).sort()).toEqual(
-      ["L10a", "L1a", "L1b", "L2a", "L2b", "L3express", "L3slow", "L11a", "L12a", "L5night", "L5night@prev", "L8a", "L9a"].sort(),
+      ["L10a", "L1a", "L1b", "L2a", "L2b", "L3express", "L3slow", "L11a", "L12a", "L5night", "L5night@prev", "L8a", "L9a", "L9b"].sort(),
     );
-    expect(feed.stats.stopTimesRead).toBe(33);
+    expect(feed.stats.stopTimesRead).toBe(35);
   });
 
   it("applies calendar_dates: a removed day and an added service", async () => {
