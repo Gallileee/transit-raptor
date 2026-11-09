@@ -59,6 +59,22 @@ export interface FeedTransfer {
   readonly seconds: number;
 }
 
+/**
+ * One edge of the graph inside a station (pathways.txt): between boarding areas, corridor
+ * nodes and entrances, never directly between platforms. Escalators often go one way only.
+ */
+export interface Pathway {
+  readonly from: number;
+  readonly to: number;
+  /** 1 walkway, 2 stairs, 3 moving sidewalk, 4 escalator, 5 elevator, 6 fare gate, 7 exit gate */
+  readonly mode: number;
+  readonly bidirectional: boolean;
+  /** traversal_time in seconds, when the feed gives one. */
+  readonly seconds: number | undefined;
+  /** stair_count, as a positive number (the sign only says up or down). */
+  readonly stairs: number;
+}
+
 export interface Feed {
   readonly date: ServiceDate;
   readonly stops: Stop[];
@@ -66,6 +82,7 @@ export interface Feed {
   readonly routes: Map<string, Route>;
   readonly trips: Trip[];
   readonly transfers: FeedTransfer[];
+  readonly pathways: Pathway[];
   readonly stats: { stopTimesRead: number; tripsInFeed: number };
 }
 
@@ -214,7 +231,26 @@ export async function loadFeed(dir: string, date: ServiceDate): Promise<Feed> {
     });
   }
 
-  return { date, stops, stopById, routes, trips, transfers, stats: { stopTimesRead, tripsInFeed } };
+  const pathways: Pathway[] = [];
+  const pathwaysFile = join(dir, "pathways.txt");
+  if (existsSync(pathwaysFile)) {
+    await readCsv(pathwaysFile, (row) => {
+      const from = stopById.get(row("from_stop_id"));
+      const to = stopById.get(row("to_stop_id"));
+      if (from === undefined || to === undefined) return;
+      const seconds = row("traversal_time") === "" ? undefined : Number(row("traversal_time"));
+      pathways.push({
+        from,
+        to,
+        mode: Number(row("pathway_mode")),
+        bidirectional: row("is_bidirectional") === "1",
+        seconds: seconds !== undefined && Number.isFinite(seconds) ? seconds : undefined,
+        stairs: Math.abs(Number(row("stair_count")) || 0),
+      });
+    });
+  }
+
+  return { date, stops, stopById, routes, trips, transfers, pathways, stats: { stopTimesRead, tripsInFeed } };
 }
 
 const FIELDS = 6;

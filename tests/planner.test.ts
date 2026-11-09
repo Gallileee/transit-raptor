@@ -44,9 +44,9 @@ describe("loading", () => {
     const { feed } = await setup();
     // WK runs on a Tuesday; EXTRA only on 17 Nov. L5night runs today and (from Monday) after midnight.
     expect(feed.trips.map((t) => t.id).sort()).toEqual(
-      ["L10a", "L1a", "L1b", "L2a", "L2b", "L3express", "L3slow", "L5night", "L5night@prev", "L8a", "L9a"].sort(),
+      ["L10a", "L1a", "L1b", "L2a", "L2b", "L3express", "L3slow", "L11a", "L12a", "L5night", "L5night@prev", "L8a", "L9a"].sort(),
     );
-    expect(feed.stats.stopTimesRead).toBe(29);
+    expect(feed.stats.stopTimesRead).toBe(33);
   });
 
   it("applies calendar_dates: a removed day and an added service", async () => {
@@ -199,10 +199,10 @@ describe("real-data fixes", () => {
     const walk = (from: string, to: string) => timetable.footpaths[id(from)]!.find((f) => f.to === id(to))?.seconds;
     const flat = (a: string, b: string) =>
       Math.max(60, Math.ceil((distanceMetres(stop(a).lat, stop(a).lon, stop(b).lat, stop(b).lon) * 1.3) / 1.2));
-    expect([stop("M1").level, stop("M2").level, stop("S").level]).toEqual([-2, -4, undefined]);
-    expect(walk("M1", "M2")).toBe(flat("M1", "M2") + 2 * 45); // two levels apart
-    expect(walk("S", "M1")).toBe(flat("S", "M1") + 2 * 45); // no level = street level
-    expect(walk("M2", "M1")).toBe(walk("M1", "M2"));
+    expect([stop("K1").level, stop("K2").level, stop("KS").level]).toEqual([-2, -4, undefined]);
+    expect(walk("K1", "K2")).toBe(flat("K1", "K2") + 2 * 45); // two levels apart
+    expect(walk("KS", "K1")).toBe(flat("KS", "K1") + 2 * 45); // no level = street level
+    expect(walk("K2", "K1")).toBe(walk("K1", "K2"));
   });
 
   it("drops a direct journey that arrives hours after one with a change", async () => {
