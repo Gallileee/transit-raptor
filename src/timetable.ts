@@ -7,6 +7,11 @@
  * with a binary search. Trips that do overtake (an express on the same stops) go to a pattern
  * of their own.
  *
+ * A step-free timetable (TimetableOptions.stepFree) is built from the same feed: without trips
+ * whose vehicle can't take a wheelchair, without getting on or off at stops marked as having no
+ * step-free access, and with changes inside stations that avoid stairs and escalators. Stops and
+ * trips without information (wheelchair 0) stay in; the API marks them as unconfirmed.
+ *
  * Times of a pattern are one flat Int32Array: for trip t and stop position i,
  * times[(t * n + i) * 2] is the arrival and times[(t * n + i) * 2 + 1] the departure.
  */
@@ -63,8 +68,16 @@ export const DEFAULT_WALK: WalkOptions = {
   secondsPerLevel: 45,
 };
 
+export interface TimetableOptions {
+  readonly walk?: WalkOptions;
+  readonly station?: StationOptions;
+  /** Only vehicles, stops and changes usable with a wheelchair (see the top of this file). */
+  readonly stepFree?: boolean;
+}
+
 export interface Timetable {
   readonly feed: Feed;
+  readonly stepFree: boolean;
   readonly patterns: Pattern[];
   /** For each stop: the patterns stopping there and the position(s) in them. */
   readonly stopPatterns: { pattern: number; position: number }[][];
@@ -80,13 +93,11 @@ export function departure(p: Pattern, trip: number, position: number): number {
   return p.times[(trip * p.stops.length + position) * 2 + 1]!;
 }
 
-export function buildTimetable(
-  feed: Feed,
-  walk: WalkOptions = DEFAULT_WALK,
-  station: StationOptions = DEFAULT_STATION,
-): Timetable {
+export function buildTimetable(feed: Feed, options: TimetableOptions = {}): Timetable {
+  const { walk = DEFAULT_WALK, station = DEFAULT_STATION, stepFree = false } = options;
+  const trips = stepFree ? feed.trips.filter((t) => t.wheelchair !== 2).map((t) => stepFreeStops(feed, t)) : feed.trips;
   const groups = new Map<string, Trip[]>();
-  for (const trip of feed.trips) {
+  for (const trip of trips) {
     const key = `${trip.routeId}|${trip.stops.join(",")}|${trip.canBoard.join("")}|${trip.canAlight.join("")}`;
     const group = groups.get(key);
     if (group) group.push(trip);
@@ -104,7 +115,14 @@ export function buildTimetable(
     p.stops.forEach((stop, position) => stopPatterns[stop]!.push({ pattern: p.index, position }));
   }
 
-  return { feed, patterns, stopPatterns, footpaths: buildFootpaths(feed, walk, station) };
+  return { feed, stepFree, patterns, stopPatterns, footpaths: buildFootpaths(feed, walk, station, stepFree) };
+}
+
+/** The trip with getting on and off forbidden where the stop has no step-free access. */
+function stepFreeStops(feed: Feed, trip: Trip): Trip {
+  if (!trip.stops.some((s) => feed.stops[s]!.wheelchair === 2)) return trip;
+  const blocked = (flags: Uint8Array) => flags.map((flag, i) => (feed.stops[trip.stops[i]!]!.wheelchair === 2 ? 0 : flag));
+  return { ...trip, canBoard: blocked(trip.canBoard), canAlight: blocked(trip.canAlight) };
 }
 
 /** Split trips (sorted by first departure) into lanes in which no trip overtakes another. */
@@ -147,7 +165,7 @@ export { distanceMetres } from "./geo.js";
  * which win when they say a walk takes longer or shorter. A stop without a level counts as
  * street level (0). Stations with pathways.txt get their changes from stations.ts instead.
  */
-function buildFootpaths(feed: Feed, walk: WalkOptions, station: StationOptions): Footpath[][] {
+function buildFootpaths(feed: Feed, walk: WalkOptions, station: StationOptions, stepFree: boolean): Footpath[][] {
   const best = feed.stops.map(() => new Map<number, number>());
   const usable = feed.stops.filter((s) => s.locationType === 0 && Number.isFinite(s.lat) && Number.isFinite(s.lon));
 
@@ -186,9 +204,23 @@ function buildFootpaths(feed: Feed, walk: WalkOptions, station: StationOptions):
   }
   // Inside stations with pathways.txt, the path through the station replaces the estimate from
   // distance and levels (both ways: it can be shorter or longer). transfers.txt has the last word.
-  for (const t of stationTransfers(feed, walk, station)) best[t.from]!.set(t.to, t.seconds);
+  const inside = stationTransfers(feed, walk, station);
+  if (stepFree) {
+    // Where the station graph connects two stops only with stairs or escalators, there is no
+    // step-free change, and the estimate from distance must not offer one either.
+    for (const t of inside) best[t.from]!.delete(t.to);
+    for (const t of stationTransfers(feed, walk, station, true)) best[t.from]!.set(t.to, t.seconds);
+  } else {
+    for (const t of inside) best[t.from]!.set(t.to, t.seconds);
+  }
   for (const t of feed.transfers) {
     if (t.from !== t.to) best[t.from]!.set(t.to, t.seconds);
   }
-  return best.map((m) => [...m].map(([to, seconds]) => ({ to, seconds })).sort((a, b) => a.seconds - b.seconds));
+  // A stop with no step-free access can't be walked to or from either.
+  const reachable = (stop: number) => !stepFree || feed.stops[stop]!.wheelchair !== 2;
+  return best.map((m, from) =>
+    reachable(from)
+      ? [...m].filter(([to]) => reachable(to)).map(([to, seconds]) => ({ to, seconds })).sort((a, b) => a.seconds - b.seconds)
+      : [],
+  );
 }

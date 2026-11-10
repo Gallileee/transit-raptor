@@ -15,6 +15,7 @@ L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
 const drawn = L.layerGroup().addTo(map);
 
 let journeys = [];
+let stepFree = false;
 
 // --- form defaults and the URL --------------------------------------------------------------
 
@@ -28,6 +29,7 @@ for (const name of ["from", "to", "date", "time", "window"]) {
   if (params.get(name)) form.elements[name].value = params.get(name);
 }
 $("list").checked = params.get("list") === "1";
+$("stepFree").checked = params.get("stepFree") === "1";
 
 $("swap").addEventListener("click", () => {
   [$("from").value, $("to").value] = [$("to").value, $("from").value];
@@ -75,6 +77,7 @@ async function search() {
     window: $("window").value,
   });
   if ($("list").checked) query.set("list", "1");
+  if ($("stepFree").checked) query.set("stepFree", "1");
   history.replaceState(null, "", `?${query}`);
 
   setStatus("Searching…");
@@ -96,12 +99,14 @@ async function search() {
     return;
   }
   journeys = body.journeys;
+  stepFree = body.stepFree;
   const ms = Math.round(performance.now() - started);
   if (journeys.length === 0) {
-    setStatus(`No journey from ${body.from} to ${body.to}.`);
+    setStatus(`No${stepFree ? " step-free" : ""} journey from ${body.from} to ${body.to}.`);
     return;
   }
-  setStatus(`${body.from} → ${body.to}, ${body.date}: ${journeys.length} journey${journeys.length > 1 ? "s" : ""} (${ms} ms)`);
+  const kind = stepFree ? " step-free" : "";
+  setStatus(`${body.from} → ${body.to}, ${body.date}: ${journeys.length}${kind} journey${journeys.length > 1 ? "s" : ""} (${ms} ms)`);
   results.replaceChildren(...journeys.map(journeyItem));
   select(0);
 }
@@ -178,7 +183,11 @@ function journeyItem(journey, index) {
       if (color(leg.textColor)) badge.style.color = color(leg.textColor);
       row.append(badge);
       const towards = leg.headsign ? ` towards ${leg.headsign}` : "";
-      row.append(el("span", "", `${stopName(leg.from)} → ${stopName(leg.to)}, ${leg.arrival}${towards}`));
+      const text = el("span", "", `${stopName(leg.from)} → ${stopName(leg.to)}, ${leg.arrival}${towards}`);
+      // In a step-free search, say where the feed doesn't confirm access (it never shows "no").
+      if (stepFree && leg.access === "unknown") text.append(el("span", "unconfirmed", " · step-free access not confirmed"));
+      if (leg.access === "yes") badge.title += " · step-free";
+      row.append(text);
     }
     legs.append(row);
   }

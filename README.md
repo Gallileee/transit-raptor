@@ -63,7 +63,17 @@ It is a learning project: [OpenTripPlanner](https://www.opentripplanner.org/) an
    which now also leaves as late as possible; `--list` shows the whole profile. One subtlety
    from the paper: a label may only be compared with labels of its own round, or a later
    departure with more changes would hide an earlier direct one (there is a test for that).
-6. **Stop names** (`stops.ts`). "andel" finds every platform called "Anděl": names are compared
+6. **Step-free journeys** (`--step-free`, a checkbox on the page), for wheelchairs and prams.
+   A second timetable is built from the same feed: trips whose vehicle can't take a wheelchair
+   (`wheelchair_accessible` 2) are left out; nobody gets on or off, or walks to, a stop marked
+   as having no step-free access (`wheelchair_boarding` 2; a platform without a value takes its
+   station's, as the GTFS reference says); and changes inside stations use the station graph
+   without stairs and escalators, or entrances marked as not step-free. Where the only
+   step-free way is out to the street and back (Muzeum A ↔ C has a lift from each platform to
+   the street, nothing inside), the graph walks along the street between the station's
+   entrances. Stops and trips the feed says nothing about are allowed, and the page says on
+   which rides access isn't confirmed (most street stops in PID).
+7. **Stop names** (`stops.ts`). "andel" finds every platform called "Anděl": names are compared
    without case, diacritics or punctuation; a unique prefix also works.
 
 ## On real data
@@ -122,12 +132,14 @@ npm run fetch-pid          # downloads Prague's timetable (~50 MB) into data/pid
 node dist/bin.js plan --gtfs data/pid --from "Anděl" --to "Muzeum" --time 8:00
 node dist/bin.js plan --gtfs data/pid --from "Anděl" --to "Muzeum" --date 2026-11-14 --max-transfers 1
 node dist/bin.js plan --gtfs data/pid --from "Anděl" --to "Letiště" --time 8:00 --list   # the next hour
+node dist/bin.js plan --gtfs data/pid --from "Hlavní nádraží" --to "Křižíkova" --step-free
 node dist/bin.js stops --gtfs data/pid --search "nadrazi"
 ```
 
 `--date` and `--time` default to now. `--window MIN` (default 60) is how far after `--time`
 departures are considered; `--window 0` leaves as early as possible. `--list` prints every
-journey worth taking in the window instead of the best per number of transfers. Any other
+journey worth taking in the window instead of the best per number of transfers.
+`--step-free` keeps to step-free vehicles, stops and changes. Any other
 unzipped GTFS feed works too: pass its folder as `--gtfs`. Example output on the test feed:
 
 ```
@@ -156,9 +168,10 @@ memory (one day of Prague is ~360 MB), and serves:
 - `/`: a form (stop names suggested as you type), the journeys, and the selected journey on a
   map, every leg in its line's colour from `routes.txt`, walks dashed. The search is kept in
   the URL, so a result can be shared or bookmarked.
-- `GET /api/plan?from=&to=[&date=YYYY-MM-DD][&time=HH:MM][&window=MIN][&maxTransfers=N][&list=1]`:
-  the journeys as JSON, with names, times, line colours and the coordinates of every stop
-  passed (for drawing).
+- `GET /api/plan?from=&to=[&date=YYYY-MM-DD][&time=HH:MM][&window=MIN][&maxTransfers=N][&list=1][&stepFree=1]`:
+  the journeys as JSON, with names, times, line colours, the coordinates of every stop passed
+  (for drawing) and, per ride, `access`: `yes` (vehicle and both stops marked step-free), `no`
+  or `unknown`. The step-free timetable of a date is built on its first use (~0.4 s) and kept.
 - `GET /api/stops?q=TEXT[&date=]`: stop names for the suggestions.
 
 Bad input gets `400` with a message, and for an unknown or ambiguous stop a list of names to
@@ -178,7 +191,8 @@ The tests run on a hand-made feed (`tests/fixtures/mini`) in which every part ex
 thing: a transfer with a walk between platforms, an express that overtakes a slower bus, a stop
 where the line doesn't pick up, a night bus past midnight (seen from the next day too), a public
 holiday from `calendar_dates.txt`, a walk that only `transfers.txt` allows, a stop with no times,
-quoted names with commas and a byte order mark. `server.test.ts` runs the HTTP server on a free
+quoted names with commas and a byte order mark, and for step-free journeys a station with lifts
+(one marked as not step-free) and vehicles and stops with and without access. `server.test.ts` runs the HTTP server on a free
 port and calls it like a browser would (JSON shapes, errors, headers, paths outside the three
 files). CI runs them on Node 22 and 24, runs the built CLI, and checks its own workflow with
 [workflow-guard](https://github.com/Gallileee/workflow-guard).
@@ -194,10 +208,13 @@ three journeys to the airport, line colours on the map, suggestions for an ambig
   factor plus a penalty per level, not a street network. Those values are cautious on purpose:
   a too-short change suggests a connection that fails in reality.
 - Inside stations, walkways have no lengths or times in PID's feed, so their time is the
-  straight line between their ends at 1.2 m/s. Elevators, accessibility (`wheelchair_boarding`,
-  stairs-free routes) and signposted exits aren't used yet.
+  straight line between their ends at 1.2 m/s. Signposted exits aren't used yet.
+- Step-free mode trusts the feed: unknown stops and trips are allowed (PID marks most street
+  stops as unknown), `transfers.txt` times are used as they are, and walks between stops
+  outside the stations with pathways assume the street is passable. It hasn't been compared
+  with IDOS's barrier-free search yet.
 - Footpaths aren't chained (one walk between two vehicles), as in the paper.
-- No real-time delays, fares, accessibility, or daylight-saving corrections (GTFS times are
+- No real-time delays, fares, or daylight-saving corrections (GTFS times are
   measured from "noon minus 12 h", which differs from midnight on the two DST days).
 - Stops without times in `stop_times.txt` take the previous stop's departure instead of an
   interpolated time.

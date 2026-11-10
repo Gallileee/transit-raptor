@@ -1,24 +1,27 @@
-﻿stop_id,stop_name,stop_lat,stop_lon,location_type,parent_station,platform_code,level_id
-A,Alpha,50.0000,14.0000,0,,,
-B1,Bravo,50.0100,14.0000,0,P,1,
-B2,Bravo,50.0101,14.0010,0,P,2,
-P,Bravo,50.01005,14.0005,1,,,
-G,Bravo Gate,50.0102,14.0015,0,,,
-C,Charlie,50.0200,14.0000,0,,,
-D,"Delta, Náměstí",50.0300,14.0000,0,,,
-E,Echo,50.0500,14.0300,0,,,
-F1,Foxtrot North,50.0400,14.0000,0,,,
-F2,Foxtrot South,50.0450,14.0000,0,,,
-M1,Gamma,50.0600,14.0000,0,GS,,GL2
-M2,Gamma,50.0600,14.0012,0,GS,,GL4
-S,Gamma Street,50.0601,14.0006,0,,,
-GS,Gamma,50.0600,14.0006,1,,,
-M1A,Gamma,50.0600,13.9998,4,M1,,GL2
-M1B,Gamma,50.0600,14.0002,4,M1,,GL2
-M2A,Gamma,50.0600,14.0010,4,M2,,GL4
-M2B,Gamma,50.0600,14.0014,4,M2,,GL4
-N1,,50.0601,14.0007,3,GS,,GL0
-GE,Gamma exit,50.0601,14.0007,2,GS,,GL0
-K1,Kilo,50.0700,14.0000,0,,,GL2
-K2,Kilo,50.0700,14.0012,0,,,GL4
-KS,Kilo Street,50.0701,14.0006,0,,,
+﻿stop_id,stop_name,stop_lat,stop_lon,location_type,parent_station,platform_code,level_id,wheelchair_boarding
+A,Alpha,50.0000,14.0000,0,,,,1
+B1,Bravo,50.0100,14.0000,0,P,1,,
+B2,Bravo,50.0101,14.0010,0,P,2,,
+P,Bravo,50.01005,14.0005,1,,,,2
+G,Bravo Gate,50.0102,14.0015,0,,,,
+C,Charlie,50.0200,14.0000,0,,,,1
+D,"Delta, Náměstí",50.0300,14.0000,0,,,,
+E,Echo,50.0500,14.0300,0,,,,
+F1,Foxtrot North,50.0400,14.0000,0,,,,2
+F2,Foxtrot South,50.0450,14.0000,0,,,,
+M1,Gamma,50.0600,14.0000,0,GS,,GL2,
+M2,Gamma,50.0600,14.0012,0,GS,,GL4,
+S,Gamma Street,50.0601,14.0006,0,,,,
+GS,Gamma,50.0600,14.0006,1,,,,1
+M1A,Gamma,50.0600,13.9998,4,M1,,GL2,
+M1B,Gamma,50.0600,14.0002,4,M1,,GL2,
+M2A,Gamma,50.0600,14.0010,4,M2,,GL4,
+M2B,Gamma,50.0600,14.0014,4,M2,,GL4,
+N1,,50.0601,14.0007,3,GS,,GL0,
+GE,Gamma exit,50.0601,14.0007,2,GS,,GL0,
+K1,Kilo,50.0700,14.0000,0,,,GL2,
+K2,Kilo,50.0700,14.0012,0,,,GL4,
+KS,Kilo Street,50.0701,14.0006,0,,,,
+GE2,Gamma north exit,50.0603,14.0010,2,GS,,GL0,2
+GE3,Gamma east lift,50.0603,14.0014,2,GS,,GL0,
+GE4,Gamma west lift,50.0598,13.9998,2,GS,,GL0,

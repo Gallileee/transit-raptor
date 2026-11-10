@@ -76,6 +76,15 @@ describe("GET /api/plan", () => {
     expect(all.json.journeys.map((j: any) => `${j.departure}-${j.arrival}`)).toEqual(["08:00-08:15", "08:05-08:30", "08:10-08:25"]);
   });
 
+  it("plans step-free with stepFree=1", async () => {
+    const query = "/api/plan?from=alpha&to=charlie&date=2026-11-10&time=08:00&window=0";
+    const normal = await get(query);
+    const stepFree = await get(`${query}&stepFree=1`);
+    expect([normal.json.stepFree, normal.json.journeys[0].legs[0].line]).toEqual([false, "1"]);
+    expect([stepFree.json.stepFree, stepFree.json.journeys[0].legs[0].line]).toEqual([true, "300"]);
+    expect((await get(`${query}&stepFree=0`)).json.stepFree).toBe(false);
+  });
+
   it("defaults to the planner's today and now", async () => {
     const { json } = await get("/api/plan?from=alpha&to=delta");
     expect([json.date, json.time]).toEqual(["2026-11-10", "07:58"]);

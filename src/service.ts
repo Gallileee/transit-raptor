@@ -2,7 +2,7 @@
  * Planning as a service: the timetable of a date is loaded once and reused, and journeys are
  * turned into plain JSON (names, times, colours, coordinates) for the web page.
  */
-import { type Feed, loadFeed } from "./gtfs.js";
+import { type Access, type Feed, loadFeed } from "./gtfs.js";
 import { type Journey, type Leg, plan, profile } from "./raptor.js";
 import { StopIndex, type StopMatch } from "./stops.js";
 import { formatClock, formatDate, parseClock, parseDate, type ServiceDate } from "./time.js";
@@ -21,6 +21,8 @@ export class RequestError extends Error {
 export interface Loaded {
   readonly feed: Feed;
   readonly timetable: Timetable;
+  /** Built on first use (about 0.3 s for Prague) and then kept with the date. */
+  readonly stepFreeTimetable: () => Timetable;
   readonly index: StopIndex;
   readonly tripById: Map<string, Feed["trips"][number]>;
 }
@@ -58,6 +60,11 @@ export type LegJson =
       departure: string;
       arrival: string;
       stops: number;
+      /**
+       * Step-free: "yes" when the vehicle and both stops are marked accessible, "no" when one of
+       * them is marked not accessible, "unknown" otherwise (most street stops in PID).
+       */
+      access: "yes" | "no" | "unknown";
       /** [lat, lon] of every stop passed, both ends included, for drawing the line. */
       path: [number, number][];
     }
@@ -80,6 +87,8 @@ export interface PlanRequest {
   window?: number | undefined;
   maxTransfers?: number | undefined;
   list?: boolean | undefined;
+  /** Only journeys usable with a wheelchair (no stairs, escalators or inaccessible vehicles). */
+  stepFree?: boolean | undefined;
 }
 
 export interface PlanResponse {
@@ -87,6 +96,7 @@ export interface PlanResponse {
   to: string;
   date: string;
   time: string;
+  stepFree: boolean;
   journeys: JourneyJson[];
 }
 
@@ -111,12 +121,16 @@ export class Planner {
       this.cache.set(key, cached);
       return cached;
     }
-    const loading = loadFeed(this.gtfsDir, date).then((feed) => ({
-      feed,
-      timetable: buildTimetable(feed),
-      index: new StopIndex(feed.stops),
-      tripById: new Map(feed.trips.map((t) => [t.id, t])),
-    }));
+    const loading = loadFeed(this.gtfsDir, date).then((feed) => {
+      let stepFree: Timetable | undefined;
+      return {
+        feed,
+        timetable: buildTimetable(feed),
+        stepFreeTimetable: () => (stepFree ??= buildTimetable(feed, { stepFree: true })),
+        index: new StopIndex(feed.stops),
+        tripById: new Map(feed.trips.map((t) => [t.id, t])),
+      };
+    });
     loading.catch(() => this.cache.delete(key)); // don't cache a failure
     this.cache.set(key, loading);
     while (this.cache.size > this.keep) this.cache.delete(this.cache.keys().next().value!);
@@ -151,12 +165,15 @@ export class Planner {
     const from = resolve(loaded.index, request.from, "from");
     const to = resolve(loaded.index, request.to, "to");
     const query = { from: from.stops, to: to.stops, departAt, maxTransfers, window: window * 60 };
-    const journeys = request.list ? profile(loaded.timetable, query) : plan(loaded.timetable, query);
+    const stepFree = request.stepFree === true;
+    const timetable = stepFree ? loaded.stepFreeTimetable() : loaded.timetable;
+    const journeys = request.list ? profile(timetable, query) : plan(timetable, query);
     return {
       from: from.name,
       to: to.name,
       date: formatDate(date),
       time: formatClock(departAt),
+      stepFree,
       journeys: journeys.map((j) => journeyJson(loaded, j)),
     };
   }
@@ -222,7 +239,14 @@ function legJson({ feed, tripById }: Loaded, leg: Leg): LegJson {
     to: stopJson(feed, leg.to),
     ...times,
     stops: leg.stopCount,
+    access: combinedAccess([trip?.wheelchair ?? 0, feed.stops[leg.from]!.wheelchair, feed.stops[leg.to]!.wheelchair]),
     path,
   };
+}
+
+/** One "no" makes the leg not step-free; it is confirmed only when every part says yes. */
+export function combinedAccess(parts: Access[]): "yes" | "no" | "unknown" {
+  if (parts.includes(2)) return "no";
+  return parts.every((p) => p === 1) ? "yes" : "unknown";
 }
 
