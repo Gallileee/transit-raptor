@@ -251,6 +251,11 @@ select:focus-visible,
   color: var(--accent-text);
 }
 
+.unconfirmed {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
 .badge.walk {
   background: transparent;
   color: var(--walk);

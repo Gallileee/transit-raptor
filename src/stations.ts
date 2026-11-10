@@ -16,6 +16,10 @@
  * - A fixed buffer (StationOptions.bufferSeconds) is added for getting off, finding the way and
  *   being at the doors before they close.
  *
+ * Step-free changes (for wheelchairs, prams, heavy luggage) use the same graph without stairs and
+ * escalators, and without nodes the feed marks as having no step-free access (wheelchair_boarding
+ * 2, e.g. an entrance with stairs only). Elevators, ramps and walkways stay.
+ *
  * Checked against the official PID planner (IDOS) on 10 Nov 2026; see PROGRESS.md.
  */
 import { distanceMetres } from "./geo.js";
@@ -61,8 +65,19 @@ export function pathwaySeconds(feed: Feed, p: Pathway, from: number, to: number,
   return flat + (p.mode === 2 ? p.stairs * options.secondsPerStair : 0);
 }
 
+/** Stairs (2) and escalators (4) can't be used with a wheelchair. */
+export function isStepFree(p: Pathway): boolean {
+  return p.mode !== 2 && p.mode !== 4;
+}
+
 /** The directed graph, both ways round (reversed edges answer "how long from X to here"). */
-function buildGraphs(feed: Feed, options: StationOptions): { forward: Edge[][]; backward: Edge[][] } {
+function buildGraphs(
+  feed: Feed,
+  options: StationOptions,
+  stepFree: boolean,
+  street: (from: number, to: number) => number | undefined,
+  entrances: Map<string, number[]>,
+): { forward: Edge[][]; backward: Edge[][] } {
   const forward: Edge[][] = feed.stops.map(() => []);
   const backward: Edge[][] = feed.stops.map(() => []);
   const add = (from: number, to: number, seconds: number) => {
@@ -70,8 +85,25 @@ function buildGraphs(feed: Feed, options: StationOptions): { forward: Edge[][]; 
     backward[to]!.push({ to: from, seconds });
   };
   for (const p of feed.pathways) {
+    if (stepFree && (!isStepFree(p) || feed.stops[p.from]!.wheelchair === 2 || feed.stops[p.to]!.wheelchair === 2)) {
+      continue;
+    }
     add(p.from, p.to, pathwaySeconds(feed, p, p.from, p.to, options));
     if (p.bidirectional) add(p.to, p.from, pathwaySeconds(feed, p, p.to, p.from, options));
+  }
+  // Out of one entrance and in through another, along the street: at Muzeum the only step-free
+  // way between lines A and C is up one elevator to the street and down the other. Only for
+  // step-free changes: in the normal graph it would shorten some changes already checked
+  // against IDOS (side-platform stations), which needs its own comparison first.
+  if (!stepFree) return { forward, backward };
+  for (const exits of entrances.values()) {
+    for (const a of exits) {
+      for (const b of exits) {
+        if (a === b || feed.stops[a]!.wheelchair === 2 || feed.stops[b]!.wheelchair === 2) continue;
+        const seconds = street(a, b);
+        if (seconds !== undefined) add(a, b, seconds);
+      }
+    }
   }
   return { forward, backward };
 }
@@ -153,15 +185,16 @@ export interface StationTransfer {
 
 /**
  * Change times for every station that has pathways: platform to platform (within the station),
- * platform to street stops near an entrance, and street stops to platforms.
+ * platform to street stops near an entrance, and street stops to platforms. With `stepFree`,
+ * only paths without stairs and escalators count, so some changes disappear and others get longer.
  */
 export function stationTransfers(
   feed: Feed,
   walk: WalkOptions,
   options: StationOptions = DEFAULT_STATION,
+  stepFree = false,
 ): StationTransfer[] {
   if (feed.pathways.length === 0) return [];
-  const { forward, backward } = buildGraphs(feed, options);
 
   // Boarding areas of each platform, entrances of each station.
   const areas = new Map<number, number[]>();
@@ -182,6 +215,7 @@ export function stationTransfers(
     const metres = distanceMetres(a.lat, a.lon, b.lat, b.lon);
     return metres <= walk.maxMetres ? (metres * walk.detour) / walk.speed : undefined;
   };
+  const { forward, backward } = buildGraphs(feed, options, stepFree, surface, entrances);
 
   const result: StationTransfer[] = [];
   const byStation = new Map<string, number[]>();

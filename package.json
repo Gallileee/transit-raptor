@@ -1,6 +1,6 @@
 {
   "name": "transit-raptor",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Journey planner for public transport timetables (GTFS) using the RAPTOR algorithm, tried on Prague's PID data",
   "license": "MIT",
   "type": "module",

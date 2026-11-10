@@ -1,6 +1,6 @@
 /**
  * transit-raptor plan  --gtfs DIR --from NAME --to NAME [--date YYYY-MM-DD] [--time HH:MM]
- *                      [--max-transfers N] [--window MIN] [--list]
+ *                      [--max-transfers N] [--window MIN] [--list] [--step-free]
  * transit-raptor stops --gtfs DIR --search TEXT
  * transit-raptor serve --gtfs DIR [--port 8080] [--host 127.0.0.1]
  *
@@ -18,7 +18,7 @@ import { buildTimetable } from "./timetable.js";
 
 const USAGE = `Usage:
   transit-raptor plan  --gtfs DIR --from NAME --to NAME [--date YYYY-MM-DD] [--time HH:MM]
-                       [--max-transfers N] [--window MIN] [--list]
+                       [--max-transfers N] [--window MIN] [--list] [--step-free]
   transit-raptor stops --gtfs DIR --search TEXT
   transit-raptor serve --gtfs DIR [--port 8080] [--host 127.0.0.1]
 
@@ -26,6 +26,8 @@ DIR is an unzipped GTFS feed (e.g. data/pid after npm run fetch-pid).
 Date and time default to now (local time).
 plan shows the fastest journey for each number of transfers, leaving as late as possible within
 --window minutes of --time (default 60). --list shows every journey worth taking in the window.
+--step-free keeps to vehicles, stops and changes usable with a wheelchair (no stairs or
+escalators); stops and vehicles the feed says nothing about are allowed.
 serve runs the web page with a map and its JSON API (/api/plan, /api/stops).`;
 
 class UsageError extends Error {}
@@ -66,6 +68,7 @@ async function run(argv: string[], io: Io): Promise<number> {
         "max-transfers": { type: "string", default: "4" },
         window: { type: "string", default: "60" },
         list: { type: "boolean", default: false },
+        "step-free": { type: "boolean", default: false },
         search: { type: "string" },
         port: { type: "string", default: "8080" },
         host: { type: "string", default: "127.0.0.1" },
@@ -113,7 +116,7 @@ async function run(argv: string[], io: Io): Promise<number> {
   const from = resolve(index, values.from, "--from");
   const to = resolve(index, values.to, "--to");
 
-  const timetable = buildTimetable(feed);
+  const timetable = buildTimetable(feed, { stepFree: values["step-free"] });
   const loaded = performance.now();
   const query = { from: from.stops, to: to.stops, departAt, maxTransfers, window: window * 60 };
   const journeys: Journey[] = values.list ? profile(timetable, query) : plan(timetable, query);
@@ -124,7 +127,8 @@ async function run(argv: string[], io: Io): Promise<number> {
       `${feed.stops.length} stops) in ${Math.round(loaded - started)} ms; search ${Math.round(searched - loaded)} ms`,
   );
   if (journeys.length === 0) {
-    io.out(`No journey from ${from.name} to ${to.name} with at most ${maxTransfers} transfers.`);
+    const how = values["step-free"] ? " step-free" : "";
+    io.out(`No${how} journey from ${from.name} to ${to.name} with at most ${maxTransfers} transfers.`);
     return 1;
   }
   io.out(`${from.name} -> ${to.name}, ${formatDate(date)}`);

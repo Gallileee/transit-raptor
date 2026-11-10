@@ -1,5 +1,57 @@
 # Progress log
 
+## 2026-11-10 (scheduled run): Milestone 5, step-free journeys
+
+Why: next step 1. A journey planner that sends a wheelchair user down an escalator is worse
+than none, and PID's feed has what is needed: `wheelchair_boarding` on stops (1,156 platforms
+yes, 5,347 no, the rest unknown, mostly street stops), `wheelchair_accessible` on every trip
+(76,366 yes, 5,926 no) and 100 elevators in pathways.txt. Semantics from the GTFS reference
+(https://gtfs.org/documentation/schedule/reference/): 0 on a platform or entrance means "as the
+parent station".
+
+Acceptance criteria:
+- A step-free option in the CLI (`--step-free`), the API (`stepFree=1`) and the page (checkbox,
+  kept in the URL).
+- Leaves out vehicles marked as not accessible and getting on/off at stops marked as not
+  accessible (inherited from the station when the platform says nothing).
+- Changes inside stations without stairs, escalators or inaccessible entrances; where the
+  station graph only connects two stops with stairs, the distance estimate must not offer a
+  change either.
+- The normal mode is unchanged (all station change times byte-identical to v0.4.0 on PID).
+- Each ride says whether access is confirmed (yes / no / unknown).
+
+Done:
+- `gtfs.ts`: `Access` (0/1/2), `Stop.wheelchair` (with inheritance), `Trip.wheelchair`.
+- `stations.ts`: `isStepFree`, `stationTransfers(..., stepFree)`; in step-free mode the graph also
+  walks along the street between entrances of the same station (Muzeum A <-> C: the feed has a
+  lift from each platform to the street and nothing inside; 8 min instead of 3).
+- `timetable.ts`: `buildTimetable(feed, { walk, station, stepFree })` (was positional);
+  `Timetable.stepFree`; trips filtered, boarding masked, estimates dropped where only stairs connect.
+- `service.ts`: `Loaded.stepFreeTimetable()` built once per date on first use; `PlanRequest.stepFree`;
+  `access` per ride; `combinedAccess`. `server.ts`: `stepFree=1`. `cli.ts`: `--step-free`.
+- `web/`: checkbox, "step-free access not confirmed" on unknown rides in a step-free search.
+- Test feed: accessibility columns, three lifts at Gamma (one to an exit marked not step-free),
+  trip L12b. Tests: `step-free.test.ts` (14) + 1 server test; 106 in total. Version 0.5.0.
+
+Decision: walking between entrances along the street is only used in step-free mode. In the
+normal graph it would shorten about 40 changes (side-platform stations, e.g. U897 164 s -> 107 s),
+which were never compared with IDOS; that comparison belongs in its own change.
+
+Verified (Node 26):
+- `npm run typecheck` clean; `npm test`: 106 passed.
+- Mutation checks, each fails at least one test: no inaccessible-node rule (it survived at first:
+  nothing checked platform -> street, so a test was added), no street links (2), escalators
+  allowed (4), no trip filter (2), no stop mask (2), no inheritance (2), keeping the distance
+  estimate (1), walking to inaccessible stops (1), no cache of the step-free timetable (1),
+  access always "yes" (1).
+- Real feed (10 Nov, 08:00): normal station changes identical to v0.4.0 (2,922); step-free 2,114.
+  Anděl -> Muzeum: same metro, Můstek change 4 min (lifts) instead of 3. Hlavní nádraží ->
+  Křižíkova: normally metro C + B via Florenc; step-free goes by tram 15 + 24, because Florenc's
+  line C platforms are marked as not step-free. Anděl -> Letiště: bus 191, and metro B + bus 100
+  via Zličín. The API through a real server: step-free timetable built in ~0.4 s, then ~66 ms.
+- Not verified: the page in a browser (the preview was declined in this unattended run), and
+  a comparison with IDOS's barrier-free search.
+
 ## 2026-11-09 (interactive): Milestone 4, a web page with a map
 
 Why: the owner picked it from the next steps. Until now the project was a command-line tool;
@@ -209,9 +261,11 @@ Mutation checks: without the filter or without the level penalty, one test each 
 
 ## Next steps (in order)
 
-1. Step-free routes: skip stairs and escalators in the station graph, use elevators and
-   `wheelchair_boarding`, as an option of the planner (and a checkbox on the page).
+1. Check the step-free checkbox in the browser, and compare step-free journeys with IDOS's
+   barrier-free search (Muzeum A <-> C, Florenc, Hlavní nádraží).
 2. Draw legs along the street with shapes.txt (3.3 M points: load only the shapes of the trips
    shown).
 3. A binary cache of the loaded timetable for a date, so startup isn't parsing CSV every time.
 4. Browser tests for the page (Playwright), now that it does more than show results.
+5. Street walks between a station's entrances in the normal graph too, after comparing the ~40
+   changes it would shorten (side-platform stations) with IDOS.

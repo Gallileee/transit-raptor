@@ -44,7 +44,7 @@ describe("MinHeap", () => {
 describe("pathways", () => {
   it("loads pathways, skipping ones that name an unknown stop", async () => {
     const { feed } = await setup();
-    expect(feed.pathways).toHaveLength(6);
+    expect(feed.pathways).toHaveLength(9);
     const stairs = feed.pathways.find((p) => p.mode === 2)!;
     expect([stairs.stairs, stairs.seconds, stairs.bidirectional]).toEqual([20, undefined, true]);
   });

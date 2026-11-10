@@ -29,6 +29,18 @@ export interface Stop {
   readonly platform: string;
   /** level_index from levels.txt (0 = street, negative = underground), or undefined. */
   readonly level: number | undefined;
+  /**
+   * wheelchair_boarding after inheritance: 0 unknown, 1 step-free access, 2 none. A platform or
+   * entrance with 0 takes its parent station's value, as the GTFS reference says.
+   */
+  readonly wheelchair: Access;
+}
+
+/** 0 no information, 1 accessible, 2 not accessible (GTFS wheelchair_boarding / _accessible). */
+export type Access = 0 | 1 | 2;
+
+function access(text: string): Access {
+  return text === "1" ? 1 : text === "2" ? 2 : 0;
 }
 
 export interface Route {
@@ -53,6 +65,8 @@ export interface Trip {
   /** 1 if passengers may board / get off at that stop (pickup_type / drop_off_type != 1). */
   readonly canBoard: Uint8Array;
   readonly canAlight: Uint8Array;
+  /** wheelchair_accessible of the vehicle: 0 unknown, 1 yes, 2 no. */
+  readonly wheelchair: Access;
 }
 
 /** A walking connection from transfers.txt (transfer_type 2 with min_transfer_time). */
@@ -122,6 +136,7 @@ interface PendingTrip {
   id: string;
   routeId: string;
   headsign: string;
+  wheelchair: Access;
   /** Shifts in seconds: 0 for the query date, -DAY for the previous service day. */
   offsets: number[];
   rows: number[]; // flattened: sequence, stop index, arrival, departure, board, alight
@@ -143,7 +158,7 @@ export async function loadFeed(dir: string, date: ServiceDate): Promise<Feed> {
     });
   }
 
-  const stops: Stop[] = [];
+  const stops: (Stop & { wheelchair: Access })[] = [];
   const stopById = new Map<string, number>();
   await readCsv(join(dir, "stops.txt"), (row) => {
     const index = stops.length;
@@ -157,10 +172,18 @@ export async function loadFeed(dir: string, date: ServiceDate): Promise<Feed> {
       locationType: Number(row("location_type") || "0"),
       platform: row("platform_code"),
       level: levels.get(row("level_id")),
+      wheelchair: access(row("wheelchair_boarding")),
     };
     stops.push(stop);
     stopById.set(stop.id, index);
   });
+
+  // Unknown on a platform or entrance means "as the station" (a parent may come later in the file).
+  for (const stop of stops) {
+    if (stop.wheelchair !== 0 || !stop.parent) continue;
+    const parent = stopById.get(stop.parent);
+    if (parent !== undefined && stops[parent]!.locationType === 1) stop.wheelchair = stops[parent]!.wheelchair;
+  }
 
   const routes = new Map<string, Route>();
   await readCsv(join(dir, "routes.txt"), (row) => {
@@ -187,7 +210,14 @@ export async function loadFeed(dir: string, date: ServiceDate): Promise<Feed> {
     if (today.has(service)) offsets.push(0);
     if (offsets.length === 0) return;
     const id = row("trip_id");
-    pending.set(id, { id, routeId: row("route_id"), headsign: row("trip_headsign"), offsets, rows: [] });
+    pending.set(id, {
+      id,
+      routeId: row("route_id"),
+      headsign: row("trip_headsign"),
+      wheelchair: access(row("wheelchair_accessible")),
+      offsets,
+      rows: [],
+    });
   });
 
   let stopTimesRead = 0;
@@ -292,7 +322,17 @@ function buildTrip(pending: PendingTrip): Trip | undefined {
     if (arrivals[i]! < 0) arrivals[i] = departures[i - 1]!;
     if (departures[i]! < 0) departures[i] = arrivals[i]!;
   }
-  return { id: pending.id, routeId: pending.routeId, headsign: pending.headsign, stops, arrivals, departures, canBoard, canAlight };
+  return {
+    id: pending.id,
+    routeId: pending.routeId,
+    headsign: pending.headsign,
+    stops,
+    arrivals,
+    departures,
+    canBoard,
+    canAlight,
+    wheelchair: pending.wheelchair,
+  };
 }
 
 function shift(trip: Trip, offset: number): Trip {

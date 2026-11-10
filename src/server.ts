@@ -2,7 +2,7 @@
  * A small HTTP server: a JSON API over the planner, and the web page in web/.
  *
  *   GET /api/stops?q=andel[&date=YYYY-MM-DD]          -> ["Anděl"]
- *   GET /api/plan?from=&to=[&date=][&time=HH:MM][&window=MIN][&maxTransfers=N][&list=1]
+ *   GET /api/plan?from=&to=[&date=][&time=HH:MM][&window=MIN][&maxTransfers=N][&list=1][&stepFree=1]
  *   GET /, /app.js, /style.css                        -> the page
  *
  * Only node:http, no framework: three routes don't need one. It listens on 127.0.0.1 unless told
@@ -84,7 +84,8 @@ async function handle(planner: Planner, req: IncomingMessage, res: ServerRespons
           time: p.get("time") || undefined,
           window: number(p.get("window"), "window"),
           maxTransfers: number(p.get("maxTransfers"), "maxTransfers"),
-          list: p.get("list") === "1" || p.get("list") === "true",
+          list: flag(p.get("list")),
+          stepFree: flag(p.get("stepFree")),
         }),
       );
       return;
@@ -112,6 +113,10 @@ function number(text: string | null, name: string): number | undefined {
   const value = Number(text);
   if (!Number.isFinite(value)) throw new RequestError(`${name} must be a number`);
   return value;
+}
+
+function flag(text: string | null): boolean {
+  return text === "1" || text === "true";
 }
 
 function json(res: ServerResponse, status: number, body: unknown): void {
