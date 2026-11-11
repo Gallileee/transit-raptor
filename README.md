@@ -73,7 +73,17 @@ It is a learning project: [OpenTripPlanner](https://www.opentripplanner.org/) an
    the street, nothing inside), the graph walks along the street between the station's
    entrances. Stops and trips the feed says nothing about are allowed, and the page says on
    which rides access isn't confirmed (most street stops in PID).
-7. **Stop names** (`stops.ts`). "andel" finds every platform called "Anděl": names are compared
+7. **Drawing rides along the street** (`shapes.ts`). `shapes.txt` gives every trip's line on
+   the map (Prague: 7,572 shapes, 3.3 M points). The part between where one gets on and off is
+   cut out by `shape_dist_traveled`, which PID gives for every stop and shape point: a binary
+   search finds the segment, and both ends are interpolated. Feeds without distances get each
+   stop projected onto the nearest segment, the second stop only *after* the first (a line that
+   comes back past its start isn't drawn backwards). A cut end more than 150 m from its stop
+   means the shape doesn't fit (a broken shape, a different unit): the ride is then drawn
+   straight between its stops, and the API says which drawing it got (`shape: true/false`).
+   Shapes don't depend on the date, so they are read once, in parallel with the first day's
+   timetable, into typed arrays (micro-degree integers, 32-bit distances): 43 MB.
+8. **Stop names** (`stops.ts`). "andel" finds every platform called "Anděl": names are compared
    without case, diacritics or punctuation; a unique prefix also works.
 
 ## On real data
@@ -85,7 +95,8 @@ Prague's PID feed of 9 Nov 2026 (valid 9-22 Nov), on a laptop with Node 26:
 | Feed | 1.69 M stop times, 82 k trips, 20 k stops |
 | Loading one day | 1.3 s (52 k trips kept), timetable 0.2 s: 6,576 patterns, 61,152 footpaths |
 | Station graphs | 68 stations, 1,532 pathways, 2,922 changes, 0.1 s |
-| Memory | 361 MB resident, 109 MB heap |
+| Shapes | 7,572 shapes, 3.28 M points, 1.1 s, 43 MB kept; 52,251 of 52,273 trips of a day fit their shape |
+| Memory | 361 MB resident, 109 MB heap without shapes; ~530 MB resident right after loading both |
 | One query | 2-15 ms for one departure; 45-190 ms over a 60-minute window (rRAPTOR) |
 
 Compared with the official planner ([IDOS for PID](https://idos.cz/pid/spojeni/)) on Tuesday
@@ -162,15 +173,16 @@ Exit codes: `0` journeys found, `1` no journey, `2` bad input or feed.
 node dist/bin.js serve --gtfs data/pid [--port 8080] [--host 127.0.0.1]
 ```
 
-It loads today's timetable at start (about 1.5 s), keeps the two most recently used dates in
+It loads today's timetable and the shapes at start (about 2.7 s), keeps the two most recently used dates in
 memory (one day of Prague is ~360 MB), and serves:
 
 - `/`: a form (stop names suggested as you type), the journeys, and the selected journey on a
   map, every leg in its line's colour from `routes.txt`, walks dashed. The search is kept in
   the URL, so a result can be shared or bookmarked.
 - `GET /api/plan?from=&to=[&date=YYYY-MM-DD][&time=HH:MM][&window=MIN][&maxTransfers=N][&list=1][&stepFree=1]`:
-  the journeys as JSON, with names, times, line colours, the coordinates of every stop passed
-  (for drawing) and, per ride, `access`: `yes` (vehicle and both stops marked step-free), `no`
+  the journeys as JSON, with names, times, line colours, the line to draw (`path`: along the
+  street from `shapes.txt` when `shape` is true, otherwise straight between the stops passed)
+  and, per ride, `access`: `yes` (vehicle and both stops marked step-free), `no`
   or `unknown`. The step-free timetable of a date is built on its first use (~0.4 s) and kept.
 - `GET /api/stops?q=TEXT[&date=]`: stop names for the suggestions.
 
@@ -192,7 +204,8 @@ thing: a transfer with a walk between platforms, an express that overtakes a slo
 where the line doesn't pick up, a night bus past midnight (seen from the next day too), a public
 holiday from `calendar_dates.txt`, a walk that only `transfers.txt` allows, a stop with no times,
 quoted names with commas and a byte order mark, and for step-free journeys a station with lifts
-(one marked as not step-free) and vehicles and stops with and without access. `server.test.ts` runs the HTTP server on a free
+(one marked as not step-free) and vehicles and stops with and without access, and three
+shapes (with distances, without, and one that lies elsewhere). `server.test.ts` runs the HTTP server on a free
 port and calls it like a browser would (JSON shapes, errors, headers, paths outside the three
 files). CI runs them on Node 22 and 24, runs the built CLI, and checks its own workflow with
 [workflow-guard](https://github.com/Gallileee/workflow-guard).
@@ -223,7 +236,10 @@ three journeys to the airport, line colours on the map, suggestions for an ambig
   limiting, one process. Map tiles come straight from tile.openstreetmap.org, which is fine for
   that but not for a public site (OSM's tile usage policy).
 - The page has no automated browser tests; the API under it does.
-- Legs are drawn as straight lines between stops, not along the street (shapes.txt isn't read).
+- Walks are drawn as straight lines; only rides follow the street.
+- Shapes are matched to stops by distance or by nearest segment, not by map matching: a shape
+  that wanders more than 150 m from a stop is not used at all (22 trips of a day in PID, where
+  the shape really ends kilometres before the last stop).
 
 ## Data
 

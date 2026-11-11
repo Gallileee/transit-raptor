@@ -1,16 +1,16 @@
-route_id,service_id,trip_id,trip_headsign,wheelchair_accessible
-L1,WK,L1a,Charlie,2
-L2,WK,L2a,"Delta, Náměstí",
-L3,WK,L3slow,"Delta, Náměstí",
-L3,WK,L3express,"Delta, Náměstí",1
-L3,EXTRA,L3holiday,"Delta, Náměstí",
-L5,WK,L5night,"Delta, Náměstí",
-L8,WK,L8a,Charlie,
-L9,WK,L9a,Foxtrot North,
-L10,WK,L10a,Echo,
-L1,WK,L1b,Charlie,2
-L2,WK,L2b,"Delta, Náměstí",
-L11,WK,L11a,Gamma,
-L12,WK,L12a,Echo,
-L9,WK,L9b,Foxtrot North,
-L12,WK,L12b,Echo,
+route_id,service_id,trip_id,trip_headsign,wheelchair_accessible,shape_id
+L1,WK,L1a,Charlie,2,SH1
+L2,WK,L2a,"Delta, Náměstí",,SH2
+L3,WK,L3slow,"Delta, Náměstí",,
+L3,WK,L3express,"Delta, Náměstí",1,
+L3,EXTRA,L3holiday,"Delta, Náměstí",,
+L5,WK,L5night,"Delta, Náměstí",,
+L8,WK,L8a,Charlie,,
+L9,WK,L9a,Foxtrot North,,SH9
+L10,WK,L10a,Echo,,
+L1,WK,L1b,Charlie,2,SH1
+L2,WK,L2b,"Delta, Náměstí",,SH2
+L11,WK,L11a,Gamma,,
+L12,WK,L12a,Echo,,
+L9,WK,L9b,Foxtrot North,,SH9
+L12,WK,L12b,Echo,,

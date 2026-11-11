@@ -4,6 +4,7 @@
  */
 import { type Access, type Feed, loadFeed } from "./gtfs.js";
 import { type Journey, type Leg, plan, profile } from "./raptor.js";
+import { cut, type LatLon, Shapes } from "./shapes.js";
 import { StopIndex, type StopMatch } from "./stops.js";
 import { formatClock, formatDate, parseClock, parseDate, type ServiceDate } from "./time.js";
 import { buildTimetable, type Timetable } from "./timetable.js";
@@ -25,6 +26,8 @@ export interface Loaded {
   readonly stepFreeTimetable: () => Timetable;
   readonly index: StopIndex;
   readonly tripById: Map<string, Feed["trips"][number]>;
+  /** Street geometry; shared by all dates (shapes don't change from day to day). */
+  readonly shapes: Shapes;
 }
 
 const MODES: Record<number, string> = {
@@ -65,8 +68,12 @@ export type LegJson =
        * them is marked not accessible, "unknown" otherwise (most street stops in PID).
        */
       access: "yes" | "no" | "unknown";
-      /** [lat, lon] of every stop passed, both ends included, for drawing the line. */
-      path: [number, number][];
+      /**
+       * The line to draw: along the street from shapes.txt when the trip has a shape that fits
+       * its stops ("shape": true), otherwise straight between the stops passed.
+       */
+      path: LatLon[];
+      shape: boolean;
     }
   | { kind: "walk"; from: StopJson; to: StopJson; departure: string; arrival: string; minutes: number; path: [number, number][] };
 
@@ -106,12 +113,25 @@ export interface PlanResponse {
  */
 export class Planner {
   private readonly cache = new Map<string, Promise<Loaded>>();
+  private shapes: Promise<Shapes> | undefined;
 
   constructor(
     readonly gtfsDir: string,
     private readonly now: () => Date = () => new Date(),
     private readonly keep = 2,
+    private readonly log: (line: string) => void = () => {},
   ) {}
+
+  /**
+   * shapes.txt, read once. A broken file costs the street drawing, not the journeys: the
+   * error is logged and the map falls back to straight lines.
+   */
+  private loadShapes(): Promise<Shapes> {
+    return (this.shapes ??= Shapes.load(this.gtfsDir).catch((e: unknown) => {
+      this.log(`shapes.txt not used: ${e instanceof Error ? e.message : String(e)}`);
+      return Shapes.empty;
+    }));
+  }
 
   load(date: ServiceDate): Promise<Loaded> {
     const key = formatDate(date);
@@ -121,7 +141,7 @@ export class Planner {
       this.cache.set(key, cached);
       return cached;
     }
-    const loading = loadFeed(this.gtfsDir, date).then((feed) => {
+    const loading = Promise.all([loadFeed(this.gtfsDir, date), this.loadShapes()]).then(([feed, shapes]) => {
       let stepFree: Timetable | undefined;
       return {
         feed,
@@ -129,6 +149,7 @@ export class Planner {
         stepFreeTimetable: () => (stepFree ??= buildTimetable(feed, { stepFree: true })),
         index: new StopIndex(feed.stops),
         tripById: new Map(feed.trips.map((t) => [t.id, t])),
+        shapes,
       };
     });
     loading.catch(() => this.cache.delete(key)); // don't cache a failure
@@ -192,7 +213,7 @@ function stopJson(feed: Feed, index: number): StopJson {
   return { name: s.name, platform: s.platform, lat: s.lat, lon: s.lon };
 }
 
-function point(feed: Feed, index: number): [number, number] {
+function point(feed: Feed, index: number): LatLon {
   const s = feed.stops[index]!;
   return [s.lat, s.lon];
 }
@@ -207,7 +228,7 @@ export function journeyJson(loaded: Loaded, journey: Journey): JourneyJson {
   };
 }
 
-function legJson({ feed, tripById }: Loaded, leg: Leg): LegJson {
+function legJson({ feed, tripById, shapes }: Loaded, leg: Leg): LegJson {
   const times = { departure: formatClock(leg.departure), arrival: formatClock(leg.arrival) };
   if (leg.kind === "walk") {
     return {
@@ -222,11 +243,17 @@ function legJson({ feed, tripById }: Loaded, leg: Leg): LegJson {
   const route = feed.routes.get(leg.routeId);
   // The stops passed: the trip's stops from where one gets on to where one gets off.
   const trip = tripById.get(leg.tripId);
-  let path: [number, number][] = [point(feed, leg.from), point(feed, leg.to)];
+  let path: LatLon[] = [point(feed, leg.from), point(feed, leg.to)];
+  let shaped: LatLon[] | undefined;
   if (trip) {
     const stops = [...trip.stops];
     const start = stops.findIndex((s, i) => s === leg.from && trip.departures[i] === leg.departure);
-    if (start >= 0) path = stops.slice(start, start + leg.stopCount + 1).map((s) => point(feed, s));
+    if (start >= 0) {
+      const end = start + leg.stopCount;
+      path = stops.slice(start, end + 1).map((s) => point(feed, s));
+      const shape = shapes.get(trip.shapeId);
+      if (shape) shaped = cut(shape, onShape(feed, trip, start), onShape(feed, trip, end));
+    }
   }
   return {
     kind: "ride",
@@ -240,8 +267,14 @@ function legJson({ feed, tripById }: Loaded, leg: Leg): LegJson {
     ...times,
     stops: leg.stopCount,
     access: combinedAccess([trip?.wheelchair ?? 0, feed.stops[leg.from]!.wheelchair, feed.stops[leg.to]!.wheelchair]),
-    path,
+    path: shaped ?? path,
+    shape: shaped !== undefined,
   };
+}
+
+function onShape(feed: Feed, trip: Feed["trips"][number], i: number) {
+  const stop = feed.stops[trip.stops[i]!]!;
+  return { lat: stop.lat, lon: stop.lon, dist: trip.distances[i]! };
 }
 
 /** One "no" makes the leg not step-free; it is confirmed only when every part says yes. */

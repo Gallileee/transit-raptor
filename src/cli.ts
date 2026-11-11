@@ -139,9 +139,9 @@ async function run(argv: string[], io: Io): Promise<number> {
 async function serve(gtfs: string, portText: string, host: string, io: Io): Promise<number> {
   const port = Number(portText);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new UsageError("--port must be from 1 to 65535");
-  const planner = new Planner(gtfs, io.now);
+  const planner = new Planner(gtfs, io.now, 2, io.err);
   const started = performance.now();
-  await planner.load(planner.today()); // fail early on a bad feed, and make the first request fast
+  await planner.load(planner.today()); // fail early on a bad feed, and make the first request fast (shapes too)
   io.err(`Loaded today's timetable in ${Math.round(performance.now() - started)} ms`);
   const server = createAppServer(planner, io.err);
   await new Promise<void>((resolveListen, reject) => {

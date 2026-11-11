@@ -67,6 +67,10 @@ export interface Trip {
   readonly canAlight: Uint8Array;
   /** wheelchair_accessible of the vehicle: 0 unknown, 1 yes, 2 no. */
   readonly wheelchair: Access;
+  /** shape_id from trips.txt (the line it follows on the map), or "". */
+  readonly shapeId: string;
+  /** shape_dist_traveled of each stop from stop_times.txt, NaN where the feed has none. */
+  readonly distances: Float32Array;
 }
 
 /** A walking connection from transfers.txt (transfer_type 2 with min_transfer_time). */
@@ -137,9 +141,10 @@ interface PendingTrip {
   routeId: string;
   headsign: string;
   wheelchair: Access;
+  shapeId: string;
   /** Shifts in seconds: 0 for the query date, -DAY for the previous service day. */
   offsets: number[];
-  rows: number[]; // flattened: sequence, stop index, arrival, departure, board, alight
+  rows: number[]; // flattened: sequence, stop index, arrival, departure, board, alight, distance
 }
 
 /** Load everything needed to plan journeys on `date`. */
@@ -215,6 +220,7 @@ export async function loadFeed(dir: string, date: ServiceDate): Promise<Feed> {
       routeId: row("route_id"),
       headsign: row("trip_headsign"),
       wheelchair: access(row("wheelchair_accessible")),
+      shapeId: row("shape_id"),
       offsets,
       rows: [],
     });
@@ -239,6 +245,7 @@ export async function loadFeed(dir: string, date: ServiceDate): Promise<Feed> {
       dep,
       row("pickup_type") === "1" ? 0 : 1,
       row("drop_off_type") === "1" ? 0 : 1,
+      row("shape_dist_traveled") === "" ? NaN : Number(row("shape_dist_traveled")),
     );
   });
 
@@ -294,7 +301,7 @@ function hexColor(text: string): string {
   return match ? match[1]!.toUpperCase() : "";
 }
 
-const FIELDS = 6;
+const FIELDS = 7;
 
 function buildTrip(pending: PendingTrip): Trip | undefined {
   const n = pending.rows.length / FIELDS;
@@ -307,6 +314,7 @@ function buildTrip(pending: PendingTrip): Trip | undefined {
   const departures = new Int32Array(n);
   const canBoard = new Uint8Array(n);
   const canAlight = new Uint8Array(n);
+  const distances = new Float32Array(n);
   order.forEach((from, to) => {
     const base = from * FIELDS;
     stops[to] = pending.rows[base + 1]!;
@@ -314,6 +322,7 @@ function buildTrip(pending: PendingTrip): Trip | undefined {
     departures[to] = pending.rows[base + 3]!;
     canBoard[to] = pending.rows[base + 4]!;
     canAlight[to] = pending.rows[base + 5]!;
+    distances[to] = pending.rows[base + 6]!;
   });
   // Stops without times take the time of the last stop that had one (never too early, which
   // would let a connection look possible when it isn't). The first stop must have a time.
@@ -332,6 +341,8 @@ function buildTrip(pending: PendingTrip): Trip | undefined {
     canBoard,
     canAlight,
     wheelchair: pending.wheelchair,
+    shapeId: pending.shapeId,
+    distances,
   };
 }
 

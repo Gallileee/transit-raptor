@@ -52,8 +52,10 @@ describe("GET /api/plan", () => {
       arrival: "08:05",
       stops: 1,
     });
+    expect(ride.shape).toBe(true); // drawn along shapes.txt, not straight
     expect(ride.path).toEqual([
       [50, 14],
+      [50.005, 14.002],
       [50.01, 14],
     ]);
     expect(walk).toMatchObject({ kind: "walk", minutes: 1, from: { platform: "1" }, to: { platform: "2" } });

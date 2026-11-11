@@ -219,8 +219,9 @@ function draw(journey) {
     line.bindTooltip(leg.kind === "walk" ? `walk ${leg.minutes} min` : `${leg.mode} ${leg.line}`);
     line.addTo(drawn);
     bounds.push(...leg.path);
-    // A dot where each leg starts, a bigger one at the end of the journey.
-    L.circleMarker(leg.path[0], { radius: i === 0 ? 7 : 5, color: "#1c2430", weight: 2, fillColor: "#fff", fillOpacity: 1 })
+    // A dot where each leg starts, a bigger one at the end of the journey. They sit on the
+    // stops themselves: a line drawn along the street may start a few metres beside the stop.
+    L.circleMarker([leg.from.lat, leg.from.lon], { radius: i === 0 ? 7 : 5, color: "#1c2430", weight: 2, fillColor: "#fff", fillOpacity: 1 })
       .bindTooltip(`${leg.departure} ${stopName(leg.from)}`)
       .addTo(drawn);
   });
@@ -228,7 +229,7 @@ function draw(journey) {
   // without this, fitBounds works with the old size and cuts the route off.
   map.invalidateSize();
   const last = journey.legs[journey.legs.length - 1];
-  L.circleMarker(last.path[last.path.length - 1], { radius: 7, color: "#1c2430", weight: 2, fillColor: "#1c2430", fillOpacity: 1 })
+  L.circleMarker([last.to.lat, last.to.lon], { radius: 7, color: "#1c2430", weight: 2, fillColor: "#1c2430", fillOpacity: 1 })
     .bindTooltip(`${last.arrival} ${stopName(last.to)}`)
     .addTo(drawn);
   map.fitBounds(bounds, { padding: [30, 30] });
