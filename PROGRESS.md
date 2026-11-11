@@ -1,5 +1,55 @@
 # Progress log
 
+## 2026-11-11 (scheduled run): Milestone 6, rides drawn along the street
+
+Why: next step 2. The map drew every ride as straight lines between stops, so a tram along the
+river cut across the blocks and a metro ride looked like a zigzag. `shapes.txt` has the real
+line, and PID gives `shape_dist_traveled` for every stop and shape point. The GTFS reference
+says this field is there so consumers know how much of a shape to draw for part of a trip
+(https://gtfs.org/documentation/schedule/reference/#shapestxt); for feeds without it,
+projecting stops onto the line is the usual fallback (gtfs-changes discussion,
+https://groups.google.com/g/gtfs-changes/c/Dx5zj5trFjQ).
+
+Acceptance criteria:
+- A ride's `path` follows its shape from the boarding stop to the alighting stop, with both
+  ends cut at the stops, not at the nearest shape point.
+- Works with distances (binary search + interpolation) and without (projection, the second
+  stop never placed before the first).
+- A shape that doesn't fit its stops (cut end > 150 m away) is not used; the ride falls back
+  to straight lines and the API says which one it got (`shape`).
+- A broken shapes.txt costs the drawing, not the journeys (logged, straight lines).
+- Memory stays reasonable: shapes are read once for all dates.
+
+Done:
+- `shapes.ts` (new): `Shapes.load` / `Shapes.of`, a `ShapeBuilder` into typed columns (counting
+  sort by shape, sequence sort only where needed), `positionAtDistance`, `project`, `cut`.
+- `gtfs.ts`: `Trip.shapeId`, `Trip.distances` (Float32Array, NaN where missing).
+- `service.ts`: `Loaded.shapes`, loaded once per Planner in parallel with the first date;
+  `LegJson.shape`; optional logger in the Planner constructor (the CLI passes stderr).
+- `web/app.js`: start and end dots sit on the stops, not on the first point of the line.
+- Test feed: `shapes.txt` (SH1 with distances and rows out of order, SH2 without, SH9 1.4 km
+  away), `shape_id` in trips.txt, `shape_dist_traveled` in stop_times.txt.
+- Tests: `shapes.test.ts` (15) + the server test now expects the shaped line; 121 in total.
+  Version 0.6.0.
+
+Decision: all shapes in memory instead of "only the shapes of the trips shown". Reading the
+file is the cost (0.7 s of 1.1 s), so loading on demand would cost that per request or need an
+index into the file; the whole set is only 43 MB as typed arrays. A first version with a JS
+array per shape peaked ~250 MB higher while parsing; typed columns brought the peak down by
+~70 MB resident.
+
+Verified (Node 26):
+- `npm run typecheck` clean; `npm test`: 121 passed.
+- Mutation checks, each fails at least one test: projecting the second stop from the start of
+  the line (1, after the loop test was made stricter: the first version survived), no 150 m
+  check (3), no sorting by shape_pt_sequence (3).
+- Real feed (11 Nov): 52,251 of 52,273 trips fit their shape end to end; every third hop
+  checked: 30 of 345,780 don't. The misfits are real data problems (L3630's shape is 1.7 km
+  long for a 22 km route; L2825's ends 266 m before Beroun, nemocnice). Cutting all trips:
+  0.4 s. Anděl -> Letiště, Anděl -> Muzeum, Hlavní nádraží -> Florenc, Malostranská -> Pražský
+  hrad, Smíchovské nádraží -> Praha-Radotín: every ride shaped (22-389 points), 13-123 ms.
+- Not verified: the map in a browser (preview declined again in this unattended run).
+
 ## 2026-11-10 (scheduled run): Milestone 5, step-free journeys
 
 Why: next step 1. A journey planner that sends a wheelchair user down an escalator is worse
@@ -263,9 +313,11 @@ Mutation checks: without the filter or without the level penalty, one test each 
 
 1. Check the step-free checkbox in the browser, and compare step-free journeys with IDOS's
    barrier-free search (Muzeum A <-> C, Florenc, Hlavní nádraží).
-2. Draw legs along the street with shapes.txt (3.3 M points: load only the shapes of the trips
-   shown).
-3. A binary cache of the loaded timetable for a date, so startup isn't parsing CSV every time.
+2. Look at the shaped lines in the browser (metro under the river, tram 22 up to the castle,
+   phone width), together with step 1.
+3. A binary cache of the loaded timetable and shapes, so startup isn't parsing CSV every time
+   (now ~2.7 s for Prague).
 4. Browser tests for the page (Playwright), now that it does more than show results.
-5. Street walks between a station's entrances in the normal graph too, after comparing the ~40
+5. Small dots for the stops passed on a ride (the path no longer goes through them).
+6. Street walks between a station's entrances in the normal graph too, after comparing the ~40
    changes it would shorten (side-platform stations) with IDOS.
