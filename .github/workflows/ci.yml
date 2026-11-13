@@ -36,4 +36,4 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
         with:
           persist-credentials: false
-      - uses: Gallileee/workflow-guard@6020472cbd3268b94220325921ce6497f4d7c9f5  # v0.12.0
+      - uses: Gallileee/workflow-guard@2078311d18e4c3befd7ab37333fabefef7a0f257  # v0.13.0
