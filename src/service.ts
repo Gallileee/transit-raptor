@@ -51,6 +51,10 @@ export interface StopJson {
   lon: number;
 }
 
+export interface PassedStop extends StopJson {
+  arrival: string;
+}
+
 export type LegJson =
   | {
       kind: "ride";
@@ -75,6 +79,11 @@ export type LegJson =
        */
       path: LatLon[];
       shape: boolean;
+      /**
+       * The stops between getting on and off where the vehicle stops, with its arrival time,
+       * for dots on the map. Stops it only passes (no pickup and no drop-off) aren't listed.
+       */
+      passed: PassedStop[];
     }
   | { kind: "walk"; from: StopJson; to: StopJson; departure: string; arrival: string; minutes: number; path: [number, number][] };
 
@@ -249,6 +258,7 @@ function legJson({ feed, tripById, shapes }: Loaded, leg: Leg): LegJson {
   const trip = tripById.get(leg.tripId);
   let path: LatLon[] = [point(feed, leg.from), point(feed, leg.to)];
   let shaped: LatLon[] | undefined;
+  const passed: PassedStop[] = [];
   if (trip) {
     const stops = [...trip.stops];
     const start = stops.findIndex((s, i) => s === leg.from && trip.departures[i] === leg.departure);
@@ -257,6 +267,10 @@ function legJson({ feed, tripById, shapes }: Loaded, leg: Leg): LegJson {
       path = stops.slice(start, end + 1).map((s) => point(feed, s));
       const shape = shapes.get(trip.shapeId);
       if (shape) shaped = cut(shape, onShape(feed, trip, start), onShape(feed, trip, end));
+      for (let i = start + 1; i < end; i++) {
+        if (!trip.canBoard[i] && !trip.canAlight[i]) continue;
+        passed.push({ ...stopJson(feed, trip.stops[i]!), arrival: formatClock(trip.arrivals[i]!) });
+      }
     }
   }
   return {
@@ -273,6 +287,7 @@ function legJson({ feed, tripById, shapes }: Loaded, leg: Leg): LegJson {
     access: combinedAccess([trip?.wheelchair ?? 0, feed.stops[leg.from]!.wheelchair, feed.stops[leg.to]!.wheelchair]),
     path: shaped ?? path,
     shape: shaped !== undefined,
+    passed,
   };
 }
 

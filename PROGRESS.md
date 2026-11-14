@@ -1,5 +1,33 @@
 # Progress log
 
+## 2026-11-14 (interactive): stops passed on a ride
+
+Why: next step 1. Since rides follow their shapes, the line no longer bends through the stops
+on the way, so the map didn't show where the vehicle stops (IDOS lists them under each ride).
+
+Acceptance criteria:
+- The API lists the stops between getting on and off, with arrival times, without the ends
+  and without stops the vehicle only drives past (pickup_type and drop_off_type both 1).
+- The map shows them as small dots in the line's colour with "time name" tooltips; the list
+  shows "N stops in between", opening to the stops and times.
+- Opening that list with the keyboard doesn't select another journey.
+
+Done:
+- `service.ts`: `LegJson.passed: PassedStop[]` (StopJson + arrival).
+- `web/app.js`: dots as `circleMarker`s with class `passed-stop`, drawn before the end dots;
+  `passedList` (`<details>`), whose keydown doesn't reach the journey's Enter/Space handler.
+  `web/style.css`: the list in the leg's text column.
+- Tests: `passed-stops.test.ts` (4, one on a copy of the feed with a drive-past stop) and one
+  browser test; 143 unit tests, 12 browser tests.
+
+Verified:
+- Mutations, each caught: drive-past stops kept (unit), no list, no dots, tooltip without the
+  time, no stopPropagation on the list (browser).
+- Real feed in the Browser pane: tram 22 Národní divadlo -> Pražský hrad has five dots along
+  the line and "5 stops in between" (Újezd 08:05, Tyršův dům 08:07, Malostranské náměstí
+  08:08, Malostranská 08:12, ...); at 375 px, metro B Anděl -> Můstek shows Karlovo náměstí and
+  Národní třída as dots and in the list, with no horizontal scroll.
+
 ## 2026-11-14 (interactive): browser tests for the page (Playwright)
 
 Why: next step 1. The page had only been checked by hand (twice), and that check found a bug.
@@ -425,10 +453,10 @@ Mutation checks: without the filter or without the level penalty, one test each 
 
 ## Next steps (in order)
 
-1. Small dots for the stops passed on a ride (the path no longer goes through them); now with
-   a browser test.
-2. Street walks between a station's entrances in the normal graph too, after comparing the ~40
-   changes it would shorten (side-platform stations) with IDOS.
-3. `serve`: notice a new feed download (fingerprint changed) and reload without a restart.
-4. Step-free changes at Muzeum A <-> C take 8 min, IDOS 3: look for a missing pathway (or an
+1. `serve`: notice a new feed download (fingerprint changed) and reload without a restart.
+2. Step-free changes at Muzeum A <-> C take 8 min, IDOS 3: look for a missing pathway (or an
    in-station lift) before shortening anything.
+3. Street walks between a station's entrances in the normal graph too, after comparing the ~40
+   changes it would shorten (side-platform stations) with IDOS.
+4. Stops without a time in the feed (not timepoints) show the time they were filled in with;
+   interpolating by distance would be closer.
