@@ -184,11 +184,11 @@ Exit codes: `0` journeys found, `1` no journey, `2` bad input or feed.
 ### The web page
 
 ```bash
-node dist/bin.js serve --gtfs data/pid [--port 8080] [--host 127.0.0.1]
+node dist/bin.js serve --gtfs data/pid [--port 8080] [--host 127.0.0.1] [--reload 5]
 ```
 
-It loads today's timetable and the shapes at start (about 2.7 s), keeps the two most recently used dates in
-memory (one day of Prague is ~360 MB), and serves:
+It loads the feed and today's timetable at start (0.3 s from the cache, about 3 s without),
+keeps the two most recently used dates in memory, and serves:
 
 - `/`: a form (stop names suggested as you type), the journeys, and the selected journey on a
   map, every leg in its line's colour from `routes.txt`, walks dashed. The search is kept in
@@ -205,6 +205,15 @@ pick from; a feed that can't be loaded gets `503`. The server listens on 127.0.0
 otherwise, serves a fixed list of three files (no URL path reaches the file system), and sends a
 Content-Security-Policy that only allows cdnjs and the map tiles. The page writes everything it
 shows with `textContent`, and only uses a line colour if it is six hex digits.
+
+**A new timetable without a restart.** PID publishes a new feed every day. Every `--reload`
+minutes (default 5; `0` turns it off) the server compares the feed files' sizes and times
+with the ones it loaded. A change is acted on only when the next check finds the files
+unchanged, so a download in progress is never read. Then the new feed is loaded in the
+background (Prague: ~3 s, the cache is rewritten), today's timetable is built, and only then
+is it swapped in. Requests in the meantime are answered from the old feed. If the new files
+can't be read, the server logs why, keeps the old feed, and tries again only when the files
+change. `npm run fetch-pid` also extracts into `data/pid.new` and renames it into place.
 
 ## Tests
 

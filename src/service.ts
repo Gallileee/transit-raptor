@@ -2,7 +2,7 @@
  * Planning as a service: the timetable of a date is loaded once and reused, and journeys are
  * turned into plain JSON (names, times, colours, coordinates) for the web page.
  */
-import { type OpenedFeed, openFeed } from "./cache.js";
+import { fingerprint, type OpenedFeed, openFeed } from "./cache.js";
 import { type Access, type Feed, feedForDate } from "./gtfs.js";
 import { type Journey, type Leg, plan, profile } from "./raptor.js";
 import { cut, type LatLon, type Shapes } from "./shapes.js";
@@ -117,13 +117,24 @@ export interface PlanResponse {
   journeys: JourneyJson[];
 }
 
+/** What `checkForNewFeed` did. */
+export type ReloadResult = "unchanged" | "waiting" | "reloaded" | "failed" | "busy";
+
 /**
  * Loads the feed once (from the cache when `cacheDir` is given and the cache is up to date),
- * and the timetables of the most recently used dates from it.
+ * and the timetables of the most recently used dates from it. `checkForNewFeed` replaces the
+ * feed when its files change (a new download), without stopping requests.
  */
 export class Planner {
   private readonly cache = new Map<string, Promise<Loaded>>();
   private opened: Promise<OpenedFeed> | undefined;
+  /** Fingerprint of the files the feed in use was read from (taken before reading them). */
+  private print: string | undefined;
+  /** A changed fingerprint seen once: reloaded when the next check sees it unchanged. */
+  private pending: string | undefined;
+  /** A fingerprint whose files failed to load: not tried again until they change. */
+  private failed: string | undefined;
+  private reloading = false;
 
   constructor(
     readonly gtfsDir: string,
@@ -136,7 +147,11 @@ export class Planner {
   /** The feed for all dates, read once; a failure isn't kept, so the next request retries. */
   private open(): Promise<OpenedFeed> {
     if (!this.opened) {
-      const opening = openFeed(this.gtfsDir, { cacheDir: this.cacheDir, log: this.log });
+      const print = fingerprint(this.gtfsDir);
+      const opening = openFeed(this.gtfsDir, { cacheDir: this.cacheDir, log: this.log }).then((opened) => {
+        this.print = print;
+        return opened;
+      });
       opening.catch(() => {
         if (this.opened === opening) this.opened = undefined;
       });
@@ -165,10 +180,61 @@ export class Planner {
         shapes,
       };
     });
-    loading.catch(() => this.cache.delete(key)); // don't cache a failure
+    loading.catch(() => {
+      if (this.cache.get(key) === loading) this.cache.delete(key); // don't cache a failure
+    });
     this.cache.set(key, loading);
     while (this.cache.size > this.keep) this.cache.delete(this.cache.keys().next().value!);
     return loading;
+  }
+
+  /**
+   * Look at the feed's files and load them again if they changed. Meant to be called every
+   * few minutes. A download replaces the files one by one, so a change is only acted on when
+   * the next check finds the files as they were: then they are read in the background, and
+   * swapped in once today's timetable is ready. Until then, and if reading fails, requests are
+   * answered from the feed in use.
+   */
+  async checkForNewFeed(): Promise<ReloadResult> {
+    if (this.print === undefined || this.reloading) return this.reloading ? "busy" : "unchanged";
+    const now = fingerprint(this.gtfsDir);
+    if (now === this.print) {
+      this.pending = undefined;
+      return "unchanged";
+    }
+    if (now === this.failed) return "failed";
+    if (now !== this.pending) {
+      this.pending = now;
+      this.log("feed: files changed; loading them once they stop changing");
+      return "waiting";
+    }
+    this.pending = undefined;
+    this.reloading = true;
+    const started = performance.now();
+    try {
+      const opened = await openFeed(this.gtfsDir, { cacheDir: this.cacheDir, log: this.log });
+      if (fingerprint(this.gtfsDir) !== now) {
+        this.log("feed: files changed again while loading; trying again later");
+        return "waiting";
+      }
+      const fresh = new Planner(this.gtfsDir, this.now, this.keep, this.log);
+      fresh.opened = Promise.resolve(opened);
+      const today = fresh.today();
+      const loaded = await fresh.load(today); // ready before anyone uses it
+      this.opened = fresh.opened;
+      this.print = now;
+      this.failed = undefined;
+      this.cache.clear();
+      this.cache.set(formatDate(today), Promise.resolve(loaded));
+      this.log(`feed: reloaded in ${Math.round(performance.now() - started)} ms`);
+      return "reloaded";
+    } catch (e) {
+      this.failed = now;
+      this.log(`feed: not reloaded (${e instanceof Error ? e.message : String(e)}); still using the previous one`);
+      return "failed";
+    } finally {
+      this.reloading = false;
+    }
   }
 
   today(): ServiceDate {
