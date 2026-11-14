@@ -236,8 +236,9 @@ three journeys to the airport, line colours on the map, suggestions for an ambig
   straight line between their ends at 1.2 m/s. Signposted exits aren't used yet.
 - Step-free mode trusts the feed: unknown stops and trips are allowed (PID marks most street
   stops as unknown), `transfers.txt` times are used as they are, and walks between stops
-  outside the stations with pathways assume the street is passable. It hasn't been compared
-  with IDOS's barrier-free search yet.
+  outside the stations with pathways assume the street is passable. Compared with IDOS's
+  barrier-free search on 16 Nov: same journey Hlavní nádraží -> Palmovka; at Muzeum A -> C it
+  allows 8 min for the change (via the street) where IDOS allows about 3.
 - Footpaths aren't chained (one walk between two vehicles), as in the paper.
 - No real-time delays, fares, or daylight-saving corrections (GTFS times are
   measured from "noon minus 12 h", which differs from midnight on the two DST days).

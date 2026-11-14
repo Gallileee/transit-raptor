@@ -3,7 +3,20 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { CsvError, parseLine, readCsv } from "../src/csv.js";
-import { addDays, DAY, formatClock, parseClock, parseDate, parseTime, TimeError, weekday } from "../src/time.js";
+import {
+  addDays,
+  DAY,
+  formatClock,
+  minutesBetween,
+  parseClock,
+  parseDate,
+  parseTime,
+  TimeError,
+  weekday,
+} from "../src/time.js";
+import { formatJourney } from "../src/format.js";
+import type { Feed } from "../src/gtfs.js";
+import { journeyJson, type Loaded } from "../src/service.js";
 
 describe("parseLine", () => {
   it.each([
@@ -57,6 +70,20 @@ describe("times", () => {
     expect(formatClock(29100)).toBe("08:05");
     expect(formatClock(DAY + 1800)).toBe("00:30 (+1)");
     expect(formatClock(-600)).toBe("23:50 (-1)");
+  });
+
+  it("counts minutes as the clock shows them, not by rounding seconds", () => {
+    // Metro A 08:01:50 -> metro C 08:12:10 on PID was shown as "08:01 -> 08:12, 10 min".
+    expect(minutesBetween(parseTime("08:01:50"), parseTime("08:12:10"))).toBe(11);
+    expect(minutesBetween(parseTime("08:01:10"), parseTime("08:12:50"))).toBe(11);
+    expect(minutesBetween(parseTime("08:05:00"), parseTime("08:05:59"))).toBe(0);
+    expect(minutesBetween(-30, 30)).toBe(1); // 23:59 (-1) -> 00:00
+  });
+
+  it("uses those minutes in the CLI and in the API, next to the times they show", () => {
+    const journey = { departure: parseTime("08:01:50"), arrival: parseTime("08:12:10"), transfers: 0, legs: [] };
+    expect(formatJourney({} as Feed, journey)).toBe("08:01 -> 08:12  (11 min, direct)");
+    expect(journeyJson({} as Loaded, journey)).toMatchObject({ departure: "08:01", arrival: "08:12", minutes: 11 });
   });
 
   it("handles dates", () => {

@@ -7,7 +7,7 @@ import { type Access, type Feed, feedForDate } from "./gtfs.js";
 import { type Journey, type Leg, plan, profile } from "./raptor.js";
 import { cut, type LatLon, type Shapes } from "./shapes.js";
 import { StopIndex, type StopMatch } from "./stops.js";
-import { formatClock, formatDate, parseClock, parseDate, type ServiceDate } from "./time.js";
+import { formatClock, formatDate, minutesBetween, parseClock, parseDate, type ServiceDate } from "./time.js";
 import { buildTimetable, type Timetable } from "./timetable.js";
 
 /** Something the caller got wrong (an unknown stop, a malformed time): HTTP 400, not 500. */
@@ -226,7 +226,7 @@ export function journeyJson(loaded: Loaded, journey: Journey): JourneyJson {
   return {
     departure: formatClock(journey.departure),
     arrival: formatClock(journey.arrival),
-    minutes: Math.round((journey.arrival - journey.departure) / 60),
+    minutes: minutesBetween(journey.departure, journey.arrival),
     transfers: journey.transfers,
     legs: journey.legs.map((leg) => legJson(loaded, leg)),
   };
@@ -240,7 +240,7 @@ function legJson({ feed, tripById, shapes }: Loaded, leg: Leg): LegJson {
       from: stopJson(feed, leg.from),
       to: stopJson(feed, leg.to),
       ...times,
-      minutes: Math.max(1, Math.round((leg.arrival - leg.departure) / 60)),
+      minutes: Math.max(1, minutesBetween(leg.departure, leg.arrival)),
       path: [point(feed, leg.from), point(feed, leg.to)],
     };
   }

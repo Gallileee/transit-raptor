@@ -1,5 +1,35 @@
 # Progress log
 
+## 2026-11-14 (interactive): browser check of step-free and shaped lines; duration fix
+
+Why: next steps 1 and 2, open since 10 and 11 Nov (the preview was declined in unattended runs).
+
+Checked in the Browser pane (`transit-raptor-web`, PID feed of 9 Nov, Monday 16 Nov 08:00):
+- Shaped lines: bus 191 Anděl -> Letiště follows the streets; metro B to Zličín follows its
+  line; tram 22 Národní divadlo -> Pražský hrad goes over the Legion bridge, Újezd,
+  Malostranské náměstí and up the Chotkova bends, cut at both stops. At 375 px the page has no
+  horizontal scroll and the map below the list shows the whole journey.
+- The step-free checkbox: has a label, adds `stepFree=1` to the URL, and the page says
+  "2 step-free journeys".
+- Against IDOS's barrier-free search ("Pouze bezbariérová spojení"; in a results URL it is
+  `lowd=1`, found in IDOS's app script; the redirect drops it from the address but the results
+  change, so it applies):
+  - Hlavní nádraží -> Palmovka: tram 15 08:02-08:04, tram 24 08:06-08:17 in both. IDOS also
+    lists metro C to Vltavská + tram 12 (arr. 08:24); transit-raptor drops it as dominated
+    (same changes, later). Both avoid changing at Florenc: its line C platforms
+    (U689Z121P/122P) have wheelchair_boarding 2 in the feed.
+  - Můstek -> I. P. Pavlova (Muzeum A -> C): IDOS metro A 08:01, change "about 3 min", metro C
+    08:08-08:10; transit-raptor the same metro A but an 8-minute change (lift up from A,
+    along the street, lift down to C, as the feed's pathways allow) and metro C 08:10-08:12.
+    Cautious by one train; left as it is, since a change that is too short is the worse error.
+  - Normal mode, same trip: metro A 08:01, change ~2-3 min, metro C 08:06-08:08 in both.
+
+Bug found and fixed: durations were rounded from seconds while clock times are truncated, so
+metro A 08:01:50 -> metro C 08:12:10 read "08:01 -> 08:12, 10 min". `time.minutesBetween`
+counts minutes as the clock shows them; used by the API (journeys, walks) and the CLI.
+Tests: 139 (2 new); reverting either use makes a test fail. Checked on the page after the fix:
+"08:01 -> 08:12, 11 min".
+
 ## 2026-11-14 (scheduled run): Milestone 7, a compiled feed and a binary cache
 
 Why: next step 3. Every start parsed ~300 MB of CSV (2.9 s for a server, 3.3 s for one CLI
@@ -365,12 +395,10 @@ Mutation checks: without the filter or without the level penalty, one test each 
 
 ## Next steps (in order)
 
-1. Check the step-free checkbox in the browser, and compare step-free journeys with IDOS's
-   barrier-free search (Muzeum A <-> C, Florenc, Hlavní nádraží).
-2. Look at the shaped lines in the browser (metro under the river, tram 22 up to the castle,
-   phone width), together with step 1.
-3. Browser tests for the page (Playwright), now that it does more than show results.
-4. Small dots for the stops passed on a ride (the path no longer goes through them).
-5. Street walks between a station's entrances in the normal graph too, after comparing the ~40
+1. Browser tests for the page (Playwright): the checks above, done by hand twice now.
+2. Small dots for the stops passed on a ride (the path no longer goes through them).
+3. Street walks between a station's entrances in the normal graph too, after comparing the ~40
    changes it would shorten (side-platform stations) with IDOS.
-6. `serve`: notice a new feed download (fingerprint changed) and reload without a restart.
+4. `serve`: notice a new feed download (fingerprint changed) and reload without a restart.
+5. Step-free changes at Muzeum A <-> C take 8 min, IDOS 3: look for a missing pathway (or an
+   in-station lift) before shortening anything.
