@@ -114,7 +114,7 @@ describe("cli", () => {
   async function run(...args: string[]) {
     const out: string[] = [];
     const err: string[] = [];
-    const code = await main(args, { out: (l) => out.push(l), err: (l) => err.push(l), now: () => new Date(2026, 10, 10, 8) });
+    const code = await main([...args, "--no-cache"], { out: (l) => out.push(l), err: (l) => err.push(l), now: () => new Date(2026, 10, 10, 8) });
     return { code, out: out.join("\n"), err: err.join("\n") };
   }
 

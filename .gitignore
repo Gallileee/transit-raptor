@@ -4,3 +4,5 @@ coverage/
 # GTFS downloads (tens of MB, regenerated daily by the publisher): never committed.
 data/
 *.zip
+# The binary feed cache (transit-raptor --cache), written next to a feed by default.
+.transit-raptor-cache/

@@ -3,12 +3,14 @@
  *                      [--max-transfers N] [--window MIN] [--list] [--step-free]
  * transit-raptor stops --gtfs DIR --search TEXT
  * transit-raptor serve --gtfs DIR [--port 8080] [--host 127.0.0.1]
+ * Every command also takes [--cache DIR | --no-cache].
  *
  * Exit codes: 0 = journeys found (or stops listed), 1 = no journey, 2 = bad input or feed.
  */
 import { parseArgs } from "node:util";
 import { formatJourney } from "./format.js";
-import { FeedError, loadFeed } from "./gtfs.js";
+import { defaultCacheDir, openFeed } from "./cache.js";
+import { FeedError, feedForDate } from "./gtfs.js";
 import { type Journey, plan, profile } from "./raptor.js";
 import { createAppServer } from "./server.js";
 import { Planner } from "./service.js";
@@ -28,7 +30,10 @@ plan shows the fastest journey for each number of transfers, leaving as late as 
 --window minutes of --time (default 60). --list shows every journey worth taking in the window.
 --step-free keeps to vehicles, stops and changes usable with a wheelchair (no stairs or
 escalators); stops and vehicles the feed says nothing about are allowed.
-serve runs the web page with a map and its JSON API (/api/plan, /api/stops).`;
+serve runs the web page with a map and its JSON API (/api/plan, /api/stops).
+The feed is read once into a binary cache (DIR/.transit-raptor-cache, or --cache DIR) that
+later runs load in a fraction of the time; it is rebuilt when a feed file changes.
+--no-cache reads the CSV files every time and writes nothing.`;
 
 class UsageError extends Error {}
 
@@ -72,6 +77,8 @@ async function run(argv: string[], io: Io): Promise<number> {
         search: { type: "string" },
         port: { type: "string", default: "8080" },
         host: { type: "string", default: "127.0.0.1" },
+        cache: { type: "string" },
+        "no-cache": { type: "boolean", default: false },
       },
       strict: true,
     });
@@ -83,7 +90,9 @@ async function run(argv: string[], io: Io): Promise<number> {
     throw new UsageError(command ? `unknown command "${command}"` : "no command");
   }
   if (!values.gtfs) throw new UsageError("--gtfs is required");
-  if (command === "serve") return serve(values.gtfs, values.port, values.host, io);
+  if (values.cache !== undefined && values["no-cache"]) throw new UsageError("--cache and --no-cache don't go together");
+  const cacheDir = values["no-cache"] ? undefined : (values.cache ?? defaultCacheDir(values.gtfs));
+  if (command === "serve") return serve(values.gtfs, values.port, values.host, cacheDir, io);
 
   const now = io.now();
   const date: ServiceDate = values.date
@@ -91,7 +100,8 @@ async function run(argv: string[], io: Io): Promise<number> {
     : { year: now.getFullYear(), month: now.getMonth() + 1, day: now.getDate() };
 
   const started = performance.now();
-  const feed = await loadFeed(values.gtfs, date);
+  const { compiled } = await openFeed(values.gtfs, { cacheDir, log: io.err, shapes: false });
+  const feed = feedForDate(compiled, date);
   const index = new StopIndex(feed.stops);
 
   if (command === "stops") {
@@ -136,10 +146,16 @@ async function run(argv: string[], io: Io): Promise<number> {
   return 0;
 }
 
-async function serve(gtfs: string, portText: string, host: string, io: Io): Promise<number> {
+async function serve(
+  gtfs: string,
+  portText: string,
+  host: string,
+  cacheDir: string | undefined,
+  io: Io,
+): Promise<number> {
   const port = Number(portText);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new UsageError("--port must be from 1 to 65535");
-  const planner = new Planner(gtfs, io.now, 2, io.err);
+  const planner = new Planner(gtfs, io.now, 2, io.err, cacheDir);
   const started = performance.now();
   await planner.load(planner.today()); // fail early on a bad feed, and make the first request fast (shapes too)
   io.err(`Loaded today's timetable in ${Math.round(performance.now() - started)} ms`);

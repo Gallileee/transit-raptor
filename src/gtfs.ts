@@ -5,7 +5,11 @@
  * which weekdays and between which dates it runs, calendar_dates.txt adds or removes single
  * days). Only trips that run on the query date are kept, plus trips of the *previous* service
  * day that are still running after midnight (their times are 24:xx or later), shifted by a day.
- * That keeps memory proportional to one day of service, not to the whole feed.
+ *
+ * Loading happens in two steps. `compileFeed` reads the CSV files once into a `CompiledFeed`:
+ * every trip of every date, its stop times in typed columns (Prague: 1.7 M rows, ~30 MB).
+ * `feedForDate` then cuts one day out of it in milliseconds, sharing the arrays, so a second
+ * date costs no file reading, and the compiled feed is what the cache (`cache.ts`) stores.
  *
  * Spec: https://gtfs.org/documentation/schedule/reference/
  */
@@ -107,48 +111,141 @@ export interface Feed {
   readonly stats: { stopTimesRead: number; tripsInFeed: number };
 }
 
+
+/** calendar.txt: a service runs on these weekdays (Monday first) between two dates. */
+export interface CalendarEntry {
+  readonly serviceId: string;
+  readonly days: readonly boolean[];
+  readonly start: number; // YYYYMMDD
+  readonly end: number;
+}
+
+/** calendar_dates.txt: a service added (1) or removed (2) on one date. */
+export interface CalendarException {
+  readonly serviceId: string;
+  readonly date: number; // YYYYMMDD
+  readonly type: 1 | 2;
+}
+
+export interface Calendar {
+  readonly entries: readonly CalendarEntry[];
+  readonly exceptions: readonly CalendarException[];
+}
+
+/**
+ * A trip of the feed, whatever its dates. Its stops are rows `start .. start + length - 1` of
+ * the feed's stop-time columns, already in stop_sequence order with missing times filled in.
+ */
+export interface CompiledTrip {
+  readonly id: string;
+  readonly routeId: string;
+  readonly headsign: string;
+  readonly serviceId: string;
+  readonly wheelchair: Access;
+  readonly shapeId: string;
+  readonly start: number;
+  readonly length: number;
+  /** Why the trip can't be used (a stop without a time, an unknown stop), or "". */
+  readonly error: string;
+}
+
+/** stop_times.txt of the whole feed, one row per stop of a trip, grouped by trip. */
+export interface StopTimeColumns {
+  readonly stops: Int32Array;
+  readonly arrivals: Int32Array;
+  readonly departures: Int32Array;
+  readonly canBoard: Uint8Array;
+  readonly canAlight: Uint8Array;
+  readonly distances: Float32Array;
+}
+
+/**
+ * The whole feed, for every date: what `feedForDate` cuts one day out of. Reading the CSV
+ * files is the slow part (Prague: 1.7 M stop times, ~1.5 s), so this is what the cache keeps.
+ */
+export interface CompiledFeed {
+  readonly stops: Stop[];
+  readonly routes: Route[];
+  readonly calendar: Calendar;
+  readonly trips: CompiledTrip[];
+  readonly columns: StopTimeColumns;
+  readonly transfers: FeedTransfer[];
+  readonly pathways: Pathway[];
+  readonly stats: { stopTimesRead: number; tripsInFeed: number };
+}
+
 const REQUIRED = ["stops.txt", "routes.txt", "trips.txt", "stop_times.txt"];
 
-/** Which service_ids run on `date`, from calendar.txt and calendar_dates.txt. */
-export async function activeServices(dir: string, date: ServiceDate): Promise<Set<string>> {
-  const key = dateKey(date);
-  const day = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"][weekday(date)]!;
-  const active = new Set<string>();
+/** Every file this project reads from a feed: what the cache's fingerprint is made of. */
+export const FEED_FILES = [
+  ...REQUIRED,
+  "calendar.txt",
+  "calendar_dates.txt",
+  "levels.txt",
+  "transfers.txt",
+  "pathways.txt",
+  "shapes.txt",
+];
+
+const DAY_COLUMNS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+
+export async function readCalendar(dir: string): Promise<Calendar> {
   const calendar = join(dir, "calendar.txt");
   const calendarDates = join(dir, "calendar_dates.txt");
   if (!existsSync(calendar) && !existsSync(calendarDates)) {
     throw new FeedError(`${dir}: neither calendar.txt nor calendar_dates.txt exists`);
   }
+  const entries: CalendarEntry[] = [];
+  const exceptions: CalendarException[] = [];
   if (existsSync(calendar)) {
     await readCsv(calendar, (row) => {
-      if (row(day) === "1" && Number(row("start_date")) <= key && key <= Number(row("end_date"))) {
-        active.add(row("service_id"));
-      }
+      entries.push({
+        serviceId: row("service_id"),
+        days: DAY_COLUMNS.map((day) => row(day) === "1"),
+        start: Number(row("start_date")),
+        end: Number(row("end_date")),
+      });
     });
   }
   if (existsSync(calendarDates)) {
     await readCsv(calendarDates, (row) => {
-      if (Number(row("date")) !== key) return;
-      if (row("exception_type") === "1") active.add(row("service_id"));
-      else if (row("exception_type") === "2") active.delete(row("service_id"));
+      const type = row("exception_type");
+      if (type === "1" || type === "2") {
+        exceptions.push({ serviceId: row("service_id"), date: Number(row("date")), type: type === "1" ? 1 : 2 });
+      }
     });
+  }
+  return { entries, exceptions };
+}
+
+/** Which service_ids run on `date`: the weekly calendar, then the exceptions in file order. */
+export function servicesOn(calendar: Calendar, date: ServiceDate): Set<string> {
+  const key = dateKey(date);
+  const day = weekday(date);
+  const active = new Set<string>();
+  for (const entry of calendar.entries) {
+    if (entry.days[day] && entry.start <= key && key <= entry.end) active.add(entry.serviceId);
+  }
+  for (const exception of calendar.exceptions) {
+    if (exception.date !== key) continue;
+    if (exception.type === 1) active.add(exception.serviceId);
+    else active.delete(exception.serviceId);
   }
   return active;
 }
 
-interface PendingTrip {
-  id: string;
-  routeId: string;
-  headsign: string;
-  wheelchair: Access;
-  shapeId: string;
-  /** Shifts in seconds: 0 for the query date, -DAY for the previous service day. */
-  offsets: number[];
-  rows: number[]; // flattened: sequence, stop index, arrival, departure, board, alight, distance
+/** Which service_ids run on `date`, from calendar.txt and calendar_dates.txt. */
+export async function activeServices(dir: string, date: ServiceDate): Promise<Set<string>> {
+  return servicesOn(await readCalendar(dir), date);
 }
 
-/** Load everything needed to plan journeys on `date`. */
+/** Load everything needed to plan journeys on `date` (reads the CSV files every time). */
 export async function loadFeed(dir: string, date: ServiceDate): Promise<Feed> {
+  return feedForDate(await compileFeed(dir), date);
+}
+
+/** Read a feed directory into a `CompiledFeed`: all trips of all dates. */
+export async function compileFeed(dir: string): Promise<CompiledFeed> {
   for (const file of REQUIRED) {
     if (!existsSync(join(dir, file))) throw new FeedError(`${dir}: missing ${file} (is this an unzipped GTFS feed?)`);
   }
@@ -190,9 +287,9 @@ export async function loadFeed(dir: string, date: ServiceDate): Promise<Feed> {
     if (parent !== undefined && stops[parent]!.locationType === 1) stop.wheelchair = stops[parent]!.wheelchair;
   }
 
-  const routes = new Map<string, Route>();
+  const routes: Route[] = [];
   await readCsv(join(dir, "routes.txt"), (row) => {
-    routes.set(row("route_id"), {
+    routes.push({
       id: row("route_id"),
       shortName: row("route_short_name"),
       longName: row("route_long_name"),
@@ -202,43 +299,43 @@ export async function loadFeed(dir: string, date: ServiceDate): Promise<Feed> {
     });
   });
 
-  const today = await activeServices(dir, date);
-  const yesterday = await activeServices(dir, addDays(date, -1));
+  const calendar = await readCalendar(dir);
 
-  const pending = new Map<string, PendingTrip>();
-  let tripsInFeed = 0;
-  await readCsv(join(dir, "trips.txt"), (row) => {
-    tripsInFeed++;
-    const service = row("service_id");
-    const offsets: number[] = [];
-    if (yesterday.has(service)) offsets.push(-DAY);
-    if (today.has(service)) offsets.push(0);
-    if (offsets.length === 0) return;
+  const tripMeta: Omit<CompiledTrip, "start" | "length" | "error">[] = [];
+  const tripIndex = new Map<string, number>();
+  const tripsInFeed = await readCsv(join(dir, "trips.txt"), (row) => {
     const id = row("trip_id");
-    pending.set(id, {
+    // A repeated trip_id replaces the earlier row but keeps its place, as a Map would.
+    const at = tripIndex.get(id) ?? tripMeta.length;
+    tripIndex.set(id, at);
+    tripMeta[at] = {
       id,
       routeId: row("route_id"),
       headsign: row("trip_headsign"),
+      serviceId: row("service_id"),
       wheelchair: access(row("wheelchair_accessible")),
       shapeId: row("shape_id"),
-      offsets,
-      rows: [],
-    });
+    };
   });
 
-  let stopTimesRead = 0;
-  await readCsv(join(dir, "stop_times.txt"), (row) => {
-    stopTimesRead++;
-    const trip = pending.get(row("trip_id"));
+  const builder = new StopTimeBuilder(tripMeta.length);
+  const errors: string[] = Array.from({ length: tripMeta.length }, () => "");
+  const stopTimesRead = await readCsv(join(dir, "stop_times.txt"), (row) => {
+    const trip = tripIndex.get(row("trip_id"));
     if (trip === undefined) return;
     const stop = stopById.get(row("stop_id"));
-    if (stop === undefined) throw new FeedError(`stop_times.txt: unknown stop_id "${row("stop_id")}"`);
+    if (stop === undefined) {
+      // Only an error if the trip runs on the date asked for, as when trips were filtered first.
+      errors[trip] ||= `stop_times.txt: unknown stop_id "${row("stop_id")}"`;
+      return;
+    }
     const arrival = row("arrival_time");
     const departure = row("departure_time");
     // Empty times (stops that aren't timepoints) are filled in later; -1 marks them.
     const arr = arrival ? parseTime(arrival) : departure ? parseTime(departure) : -1;
     const dep = departure ? parseTime(departure) : arr;
-    trip.rows.push(
+    builder.add(
+      trip,
       Number(row("stop_sequence")),
       stop,
       arr,
@@ -248,17 +345,22 @@ export async function loadFeed(dir: string, date: ServiceDate): Promise<Feed> {
       row("shape_dist_traveled") === "" ? NaN : Number(row("shape_dist_traveled")),
     );
   });
+  const { columns, start } = builder.build();
 
-  const trips: Trip[] = [];
-  for (const trip of pending.values()) {
-    const built = buildTrip(trip);
-    if (built === undefined) continue;
-    for (const offset of trip.offsets) {
-      // A trip of the previous day only matters if it is still running after midnight.
-      if (offset < 0 && built.arrivals[built.arrivals.length - 1]! + offset < 0) continue;
-      trips.push(offset === 0 ? built : shift(built, offset));
+  const trips = tripMeta.map((meta, t): CompiledTrip => {
+    const [s, e] = [start[t]!, start[t + 1]!];
+    let error = errors[t]!;
+    // Stops without times take the time of the last stop that had one (never too early, which
+    // would let a connection look possible when it isn't). The first stop must have a time.
+    if (!error && e - s >= 2) {
+      if (columns.arrivals[s]! < 0) error = `trip ${meta.id}: the first stop has no time`;
+      for (let i = s + 1; i < e; i++) {
+        if (columns.arrivals[i]! < 0) columns.arrivals[i] = columns.departures[i - 1]!;
+        if (columns.departures[i]! < 0) columns.departures[i] = columns.arrivals[i]!;
+      }
     }
-  }
+    return { ...meta, start: s, length: e - s, error };
+  });
 
   const transfers: FeedTransfer[] = [];
   const transfersFile = join(dir, "transfers.txt");
@@ -292,7 +394,72 @@ export async function loadFeed(dir: string, date: ServiceDate): Promise<Feed> {
     });
   }
 
-  return { date, stops, stopById, routes, trips, transfers, pathways, stats: { stopTimesRead, tripsInFeed } };
+  return { stops, routes, calendar, trips, columns, transfers, pathways, stats: { stopTimesRead, tripsInFeed } };
+}
+
+/**
+ * Cut one service date out of a compiled feed: the trips running that day, plus the trips of
+ * the previous day still running after midnight, shifted by a day. Trips of that day share
+ * the feed's stop-time arrays (no copy); only the shifted ones get arrays of their own.
+ */
+export function feedForDate(compiled: CompiledFeed, date: ServiceDate): Feed {
+  const today = servicesOn(compiled.calendar, date);
+  const yesterday = servicesOn(compiled.calendar, addDays(date, -1));
+  const { columns } = compiled;
+  const trips: Trip[] = [];
+  for (const meta of compiled.trips) {
+    const offsets: number[] = [];
+    if (yesterday.has(meta.serviceId)) offsets.push(-DAY);
+    if (today.has(meta.serviceId)) offsets.push(0);
+    if (offsets.length === 0) continue;
+    if (meta.error) throw new FeedError(meta.error);
+    if (meta.length < 2) continue;
+    const [s, e] = [meta.start, meta.start + meta.length];
+    const trip: Trip = {
+      id: meta.id,
+      routeId: meta.routeId,
+      headsign: meta.headsign,
+      stops: columns.stops.subarray(s, e),
+      arrivals: columns.arrivals.subarray(s, e),
+      departures: columns.departures.subarray(s, e),
+      canBoard: columns.canBoard.subarray(s, e),
+      canAlight: columns.canAlight.subarray(s, e),
+      wheelchair: meta.wheelchair,
+      shapeId: meta.shapeId,
+      distances: columns.distances.subarray(s, e),
+    };
+    for (const offset of offsets) {
+      // A trip of the previous day only matters if it is still running after midnight.
+      if (offset < 0 && trip.arrivals[trip.arrivals.length - 1]! + offset < 0) continue;
+      trips.push(offset === 0 ? trip : shift(trip, offset));
+    }
+  }
+  return {
+    date,
+    stops: compiled.stops,
+    stopById: stopIndexOf(compiled),
+    routes: routeMapOf(compiled),
+    trips,
+    transfers: compiled.transfers,
+    pathways: compiled.pathways,
+    stats: compiled.stats,
+  };
+}
+
+// Built once per compiled feed and shared by all its dates.
+const stopIndexes = new WeakMap<CompiledFeed, Map<string, number>>();
+const routeMaps = new WeakMap<CompiledFeed, Map<string, Route>>();
+
+function stopIndexOf(compiled: CompiledFeed): Map<string, number> {
+  let map = stopIndexes.get(compiled);
+  if (!map) stopIndexes.set(compiled, (map = new Map(compiled.stops.map((s) => [s.id, s.index]))));
+  return map;
+}
+
+function routeMapOf(compiled: CompiledFeed): Map<string, Route> {
+  let map = routeMaps.get(compiled);
+  if (!map) routeMaps.set(compiled, (map = new Map(compiled.routes.map((r) => [r.id, r]))));
+  return map;
 }
 
 /** "00a562" or "#00A562" -> "00A562"; anything else -> "". */
@@ -301,49 +468,91 @@ function hexColor(text: string): string {
   return match ? match[1]!.toUpperCase() : "";
 }
 
-const FIELDS = 7;
+/**
+ * Collects stop times in file order into growing typed arrays, then groups them by trip
+ * (counting sort, file order kept) and sorts by stop_sequence only where a trip's rows aren't
+ * in order already. The same approach as for shapes: a JS array per trip costs far more.
+ */
+class StopTimeBuilder {
+  private readonly counts: Int32Array;
+  private n = 0;
+  private trip = new Int32Array(1024);
+  private sequence = new Float64Array(1024);
+  private stop = new Int32Array(1024);
+  private arrival = new Int32Array(1024);
+  private departure = new Int32Array(1024);
+  private board = new Uint8Array(1024);
+  private alight = new Uint8Array(1024);
+  private distance = new Float32Array(1024);
 
-function buildTrip(pending: PendingTrip): Trip | undefined {
-  const n = pending.rows.length / FIELDS;
-  if (n < 2) return undefined;
-  const order = Array.from({ length: n }, (_, i) => i).sort(
-    (a, b) => pending.rows[a * FIELDS]! - pending.rows[b * FIELDS]!,
-  );
-  const stops = new Int32Array(n);
-  const arrivals = new Int32Array(n);
-  const departures = new Int32Array(n);
-  const canBoard = new Uint8Array(n);
-  const canAlight = new Uint8Array(n);
-  const distances = new Float32Array(n);
-  order.forEach((from, to) => {
-    const base = from * FIELDS;
-    stops[to] = pending.rows[base + 1]!;
-    arrivals[to] = pending.rows[base + 2]!;
-    departures[to] = pending.rows[base + 3]!;
-    canBoard[to] = pending.rows[base + 4]!;
-    canAlight[to] = pending.rows[base + 5]!;
-    distances[to] = pending.rows[base + 6]!;
-  });
-  // Stops without times take the time of the last stop that had one (never too early, which
-  // would let a connection look possible when it isn't). The first stop must have a time.
-  if (arrivals[0]! < 0) throw new FeedError(`trip ${pending.id}: the first stop has no time`);
-  for (let i = 1; i < n; i++) {
-    if (arrivals[i]! < 0) arrivals[i] = departures[i - 1]!;
-    if (departures[i]! < 0) departures[i] = arrivals[i]!;
+  constructor(trips: number) {
+    this.counts = new Int32Array(trips);
   }
-  return {
-    id: pending.id,
-    routeId: pending.routeId,
-    headsign: pending.headsign,
-    stops,
-    arrivals,
-    departures,
-    canBoard,
-    canAlight,
-    wheelchair: pending.wheelchair,
-    shapeId: pending.shapeId,
-    distances,
-  };
+
+  add(trip: number, sequence: number, stop: number, arr: number, dep: number, board: number, alight: number, dist: number) {
+    if (this.n === this.trip.length) this.grow();
+    const i = this.n++;
+    this.counts[trip]!++;
+    this.trip[i] = trip;
+    this.sequence[i] = sequence;
+    this.stop[i] = stop;
+    this.arrival[i] = arr;
+    this.departure[i] = dep;
+    this.board[i] = board;
+    this.alight[i] = alight;
+    this.distance[i] = dist;
+  }
+
+  private grow(): void {
+    const size = this.trip.length * 2;
+    const bigger = <T extends Int32Array | Uint8Array | Float32Array | Float64Array>(old: T, make: (n: number) => T): T => {
+      const array = make(size);
+      array.set(old);
+      return array;
+    };
+    this.trip = bigger(this.trip, (n) => new Int32Array(n));
+    this.sequence = bigger(this.sequence, (n) => new Float64Array(n));
+    this.stop = bigger(this.stop, (n) => new Int32Array(n));
+    this.arrival = bigger(this.arrival, (n) => new Int32Array(n));
+    this.departure = bigger(this.departure, (n) => new Int32Array(n));
+    this.board = bigger(this.board, (n) => new Uint8Array(n));
+    this.alight = bigger(this.alight, (n) => new Uint8Array(n));
+    this.distance = bigger(this.distance, (n) => new Float32Array(n));
+  }
+
+  build(): { columns: StopTimeColumns; start: Int32Array } {
+    const { n, counts } = this;
+    const trips = counts.length;
+    const start = new Int32Array(trips + 1);
+    for (let t = 0; t < trips; t++) start[t + 1] = start[t]! + counts[t]!;
+    const next = start.slice(0, trips);
+    const order = new Int32Array(n);
+    for (let i = 0; i < n; i++) order[next[this.trip[i]!]!++] = i;
+    for (let t = 0; t < trips; t++) {
+      const part = order.subarray(start[t]!, start[t + 1]!);
+      if (part.some((row, j) => j > 0 && this.sequence[row]! < this.sequence[part[j - 1]!]!)) {
+        part.set(Array.from(part).sort((a, b) => this.sequence[a]! - this.sequence[b]!));
+      }
+    }
+    const columns: StopTimeColumns = {
+      stops: new Int32Array(n),
+      arrivals: new Int32Array(n),
+      departures: new Int32Array(n),
+      canBoard: new Uint8Array(n),
+      canAlight: new Uint8Array(n),
+      distances: new Float32Array(n),
+    };
+    for (let to = 0; to < n; to++) {
+      const from = order[to]!;
+      columns.stops[to] = this.stop[from]!;
+      columns.arrivals[to] = this.arrival[from]!;
+      columns.departures[to] = this.departure[from]!;
+      columns.canBoard[to] = this.board[from]!;
+      columns.canAlight[to] = this.alight[from]!;
+      columns.distances[to] = this.distance[from]!;
+    }
+    return { columns, start };
+  }
 }
 
 function shift(trip: Trip, offset: number): Trip {

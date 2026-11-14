@@ -25,10 +25,16 @@ It is a learning project: [OpenTripPlanner](https://www.opentripplanner.org/) an
 
 ## How it works
 
-1. **Loading** (`gtfs.ts`). A GTFS feed is a zip of CSV files. `stop_times.txt` is streamed
-   line by line (`csv.ts`), and only the trips that run on the requested date are kept: the
-   services from `calendar.txt` minus/plus the exceptions in `calendar_dates.txt`, plus trips of
-   the *previous* day that are still running after midnight (GTFS writes those as `24:20:00`).
+1. **Loading** (`gtfs.ts`, `cache.ts`). A GTFS feed is a zip of CSV files. They are read once
+   (`stop_times.txt` streamed line by line, `csv.ts`) into a *compiled feed*: every trip of every
+   date, its stop times sorted into typed columns. A date is then cut out of it in milliseconds:
+   the services from `calendar.txt` minus/plus the exceptions in `calendar_dates.txt`, plus trips
+   of the *previous* day that are still running after midnight (GTFS writes those as `24:20:00`).
+   Trips of that day are views into the shared columns, so a second date costs almost nothing.
+   The compiled feed and the shapes are saved in a **binary cache** (typed arrays as they are in
+   memory, the small tables as JSON, a CRC-32, and a fingerprint of every feed file's size and
+   modification time), so the next start reads one file instead of parsing 300 MB of CSV:
+   2.9 s -> 0.36 s for Prague. A changed, damaged or foreign cache file is ignored and rewritten.
 2. **Timetable** (`timetable.ts`). Trips with the same stops in the same order form a
    *pattern*, sorted by departure. A trip that overtakes another (an express) gets a pattern of
    its own, because RAPTOR finds "the first trip I can still catch" with a binary search, which
@@ -94,9 +100,10 @@ Prague's PID feed of 9 Nov 2026 (valid 9-22 Nov), on a laptop with Node 26:
 |---|---|
 | Feed | 1.69 M stop times, 82 k trips, 20 k stops |
 | Loading one day | 1.3 s (52 k trips kept), timetable 0.2 s: 6,576 patterns, 61,152 footpaths |
+| Binary cache | 79 MB; a server start 2.9 s -> 0.36 s (cache read 0.11 s), a CLI query 3.3 s -> 0.64 s; a second date 1.9 s -> 0.2 s |
 | Station graphs | 68 stations, 1,532 pathways, 2,922 changes, 0.1 s |
 | Shapes | 7,572 shapes, 3.28 M points, 1.1 s, 43 MB kept; 52,251 of 52,273 trips of a day fit their shape |
-| Memory | 361 MB resident, 109 MB heap without shapes; ~530 MB resident right after loading both |
+| Memory | ~380 MB resident with two dates, shapes and the whole feed loaded (was ~760 MB before dates shared the stop-time arrays) |
 | One query | 2-15 ms for one departure; 45-190 ms over a 60-minute window (rRAPTOR) |
 
 Compared with the official planner ([IDOS for PID](https://idos.cz/pid/spojeni/)) on Tuesday
@@ -150,7 +157,10 @@ node dist/bin.js stops --gtfs data/pid --search "nadrazi"
 `--date` and `--time` default to now. `--window MIN` (default 60) is how far after `--time`
 departures are considered; `--window 0` leaves as early as possible. `--list` prints every
 journey worth taking in the window instead of the best per number of transfers.
-`--step-free` keeps to step-free vehicles, stops and changes. Any other
+`--step-free` keeps to step-free vehicles, stops and changes. The first run on a feed writes
+a binary cache into `DIR/.transit-raptor-cache/` (about 80 MB for Prague; `--cache DIR` puts it
+elsewhere, `--no-cache` reads the CSV files and writes nothing); later runs start in well under a
+second and rebuild it by themselves when the feed is downloaded again. Any other
 unzipped GTFS feed works too: pass its folder as `--gtfs`. Example output on the test feed:
 
 ```
@@ -205,7 +215,9 @@ where the line doesn't pick up, a night bus past midnight (seen from the next da
 holiday from `calendar_dates.txt`, a walk that only `transfers.txt` allows, a stop with no times,
 quoted names with commas and a byte order mark, and for step-free journeys a station with lifts
 (one marked as not step-free) and vehicles and stops with and without access, and three
-shapes (with distances, without, and one that lies elsewhere). `server.test.ts` runs the HTTP server on a free
+shapes (with distances, without, and one that lies elsewhere). `cache.test.ts` checks that
+every date cut from the cache equals the date read from CSV, and that a stale, damaged,
+cut-off or unwritable cache only means reading the CSV again. `server.test.ts` runs the HTTP server on a free
 port and calls it like a browser would (JSON shapes, errors, headers, paths outside the three
 files). CI runs them on Node 22 and 24, runs the built CLI, and checks its own workflow with
 [workflow-guard](https://github.com/Gallileee/workflow-guard).
@@ -231,7 +243,10 @@ three journeys to the airport, line colours on the map, suggestions for an ambig
   measured from "noon minus 12 h", which differs from midnight on the two DST days).
 - Stops without times in `stop_times.txt` take the previous stop's departure instead of an
   interpolated time.
-- The CLI loads the day's timetable for every query (1.5 s for Prague); `serve` loads it once.
+- The cache trusts file sizes and modification times: a feed file edited in place within the
+  same millisecond and to the same size would not be noticed (`--no-cache` or deleting the
+  folder helps). It is written for little-endian machines only (all common ones); elsewhere it
+  is just not written.
 - The web server is meant for one user on their own machine: no authentication, no rate
   limiting, one process. Map tiles come straight from tile.openstreetmap.org, which is fine for
   that but not for a public site (OSM's tile usage policy).
