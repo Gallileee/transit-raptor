@@ -179,7 +179,7 @@ describe("step-free in the API and the CLI", () => {
   it("has --step-free in the CLI", async () => {
     const out: string[] = [];
     const io = { out: (l: string) => out.push(l), err: () => {}, now: () => new Date(2026, 10, 10, 8, 15) };
-    const args = ["plan", "--gtfs", MINI, "--from", "charlie", "--to", "foxtrot north", "--window", "0"];
+    const args = ["plan", "--gtfs", MINI, "--from", "charlie", "--to", "foxtrot north", "--window", "0", "--no-cache"];
     expect(await main(args, io)).toBe(0);
     out.length = 0;
     expect(await main([...args, "--step-free"], io)).toBe(1);

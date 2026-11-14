@@ -2,9 +2,10 @@
  * Planning as a service: the timetable of a date is loaded once and reused, and journeys are
  * turned into plain JSON (names, times, colours, coordinates) for the web page.
  */
-import { type Access, type Feed, loadFeed } from "./gtfs.js";
+import { type OpenedFeed, openFeed } from "./cache.js";
+import { type Access, type Feed, feedForDate } from "./gtfs.js";
 import { type Journey, type Leg, plan, profile } from "./raptor.js";
-import { cut, type LatLon, Shapes } from "./shapes.js";
+import { cut, type LatLon, type Shapes } from "./shapes.js";
 import { StopIndex, type StopMatch } from "./stops.js";
 import { formatClock, formatDate, parseClock, parseDate, type ServiceDate } from "./time.js";
 import { buildTimetable, type Timetable } from "./timetable.js";
@@ -108,29 +109,31 @@ export interface PlanResponse {
 }
 
 /**
- * Loads and caches timetables by date. Only the most recent few are kept: one day of Prague
- * takes about 360 MB.
+ * Loads the feed once (from the cache when `cacheDir` is given and the cache is up to date),
+ * and the timetables of the most recently used dates from it.
  */
 export class Planner {
   private readonly cache = new Map<string, Promise<Loaded>>();
-  private shapes: Promise<Shapes> | undefined;
+  private opened: Promise<OpenedFeed> | undefined;
 
   constructor(
     readonly gtfsDir: string,
     private readonly now: () => Date = () => new Date(),
     private readonly keep = 2,
     private readonly log: (line: string) => void = () => {},
+    private readonly cacheDir: string | undefined = undefined,
   ) {}
 
-  /**
-   * shapes.txt, read once. A broken file costs the street drawing, not the journeys: the
-   * error is logged and the map falls back to straight lines.
-   */
-  private loadShapes(): Promise<Shapes> {
-    return (this.shapes ??= Shapes.load(this.gtfsDir).catch((e: unknown) => {
-      this.log(`shapes.txt not used: ${e instanceof Error ? e.message : String(e)}`);
-      return Shapes.empty;
-    }));
+  /** The feed for all dates, read once; a failure isn't kept, so the next request retries. */
+  private open(): Promise<OpenedFeed> {
+    if (!this.opened) {
+      const opening = openFeed(this.gtfsDir, { cacheDir: this.cacheDir, log: this.log });
+      opening.catch(() => {
+        if (this.opened === opening) this.opened = undefined;
+      });
+      this.opened = opening;
+    }
+    return this.opened;
   }
 
   load(date: ServiceDate): Promise<Loaded> {
@@ -141,7 +144,8 @@ export class Planner {
       this.cache.set(key, cached);
       return cached;
     }
-    const loading = Promise.all([loadFeed(this.gtfsDir, date), this.loadShapes()]).then(([feed, shapes]) => {
+    const loading = this.open().then(({ compiled, shapes }) => {
+      const feed = feedForDate(compiled, date);
       let stepFree: Timetable | undefined;
       return {
         feed,

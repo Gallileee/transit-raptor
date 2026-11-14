@@ -1,5 +1,59 @@
 # Progress log
 
+## 2026-11-14 (scheduled run): Milestone 7, a compiled feed and a binary cache
+
+Why: next step 3. Every start parsed ~300 MB of CSV (2.9 s for a server, 3.3 s for one CLI
+query), and every new date in the server read stop_times.txt again (1.9 s). Production planners
+split this the same way: OpenTripPlanner builds its graph once, saves it (`--build --save` ->
+graph.obj, with a serialization version in the header) and loads that at startup (`--load`)
+(https://opentripplanner.readthedocs.io/en/latest/Basic-Tutorial/). Here the "graph" is mostly
+typed arrays, which can be written to disk and read back with no parsing at all.
+
+Acceptance criteria:
+- Read the CSV files once into a date-independent compiled feed; cut any date out of it, with
+  results identical to the old per-date loader (checked on the real feed, not only the fixture).
+- Save it with the shapes in one binary file; later starts read that file.
+- The cache rebuilds itself when a feed file changes (size or modification time), and a cache
+  from another format version, another feed, damaged or cut off is ignored and rewritten.
+- A cache that can't be written never stops planning.
+- CLI: `--cache DIR`, `--no-cache`; default `<feed>/.transit-raptor-cache/` (gitignored).
+
+Done:
+- `gtfs.ts`: `compileFeed` (all trips; stop times into typed columns with a counting sort by
+  trip, sequence sort only where needed, times filled in), `feedForDate` (trips of the day are
+  `subarray` views into the shared columns; only previous-day trips get shifted copies),
+  `readCalendar` / `servicesOn`; `loadFeed` and `activeServices` keep their signatures. A
+  broken trip (unknown stop, first stop without a time) still only fails the dates it runs on.
+- `shapes.ts`: `Shapes` is built from `ShapeColumns` (ids, start offsets, lat, lon, dist), which
+  is what the cache stores; `Shapes.fromColumns` checks the columns fit together.
+- `cache.ts` (new): `encode` / `decode` (magic, format, header JSON, CRC-32 via `zlib.crc32`,
+  arrays at 8-byte offsets, views when aligned and copies otherwise), `fingerprint`, `cacheFile`
+  (one file per feed path), `openFeed` (cache or CSV, writes via a temp file + rename).
+- `service.ts`: `Planner` opens the feed once (5th constructor argument `cacheDir`) and cuts
+  dates from it; `cli.ts`: `--cache`, `--no-cache`; `plan`/`stops` skip shapes without a cache.
+- Tests: `cache.test.ts` (16); `cli.test.ts` runs without a cache unless a test asks. 137 in
+  total. Version 0.7.0.
+
+Decisions:
+- Cache the *compiled feed*, not a day's timetable: one file serves every date, and building a
+  timetable from a day (0.2 s) is cheap. Caching timetables too would save 0.2 s for 2x the disk.
+- Size + mtime fingerprint, not a hash of the CSV files: hashing 300 MB would cost about as much
+  as the parsing it saves. The documented gap: an edit in place within the same millisecond and
+  to the same size isn't noticed.
+- A hand-written format instead of `v8.serialize`: V8's format may change between Node versions
+  and copies every typed array; this one maps them straight from the read buffer.
+
+Verified (Node 26, PID feed of 9 Nov):
+- `npm run typecheck` clean; `npm test`: 137 passed; `npm run build` ok.
+- Old loader (main, built in a worktree) vs new, CSV and cache path, deep-compared on 14, 16,
+  17 (holiday) and 22 Nov: identical (28-52 k trips each); shapes columns identical (7,572).
+- Timings: server first date 2,838 ms (old) -> 356 ms (cache) / 2,874 ms (no cache); second
+  date 1,884 -> ~210 ms; RSS with two dates 759 MB -> ~380 MB; CLI query 3.3 s cold (writes
+  the 79 MB cache) -> 0.64 s warm, output identical.
+- Mutation checks, each fails at least one test: no checksum check, no mtime in the
+  fingerprint, never copying unaligned arrays, fingerprint ignored.
+- Not verified: the web page (nothing on it changed; the API tests run through the Planner).
+
 ## 2026-11-11 (scheduled run): Milestone 6, rides drawn along the street
 
 Why: next step 2. The map drew every ride as straight lines between stops, so a tram along the
@@ -315,9 +369,8 @@ Mutation checks: without the filter or without the level penalty, one test each 
    barrier-free search (Muzeum A <-> C, Florenc, Hlavní nádraží).
 2. Look at the shaped lines in the browser (metro under the river, tram 22 up to the castle,
    phone width), together with step 1.
-3. A binary cache of the loaded timetable and shapes, so startup isn't parsing CSV every time
-   (now ~2.7 s for Prague).
-4. Browser tests for the page (Playwright), now that it does more than show results.
-5. Small dots for the stops passed on a ride (the path no longer goes through them).
-6. Street walks between a station's entrances in the normal graph too, after comparing the ~40
+3. Browser tests for the page (Playwright), now that it does more than show results.
+4. Small dots for the stops passed on a ride (the path no longer goes through them).
+5. Street walks between a station's entrances in the normal graph too, after comparing the ~40
    changes it would shorten (side-platform stations) with IDOS.
+6. `serve`: notice a new feed download (fingerprint changed) and reload without a restart.

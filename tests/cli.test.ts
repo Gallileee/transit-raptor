@@ -4,7 +4,9 @@ import { main } from "../src/cli.js";
 
 const MINI = join(import.meta.dirname, "fixtures", "mini");
 
+/** Runs the CLI without a cache (which would be written into the fixture folder) unless asked. */
 async function run(...args: string[]) {
+  if (!args.some((a) => a.startsWith("--cache") || a === "--no-cache")) args.push("--no-cache");
   const out: string[] = [];
   const err: string[] = [];
   const code = await main(args, {

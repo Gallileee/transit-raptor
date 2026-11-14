@@ -47,48 +47,6 @@ export const MAX_OFFSET_METRES = 150;
 
 const MICRO = 1e6;
 
-export class Shapes {
-  private constructor(private readonly byId: Map<string, Shape>) {}
-
-  static readonly empty = new Shapes(new Map());
-
-  /** Read shapes.txt from a feed directory; a feed without one has no shapes. */
-  static async load(dir: string): Promise<Shapes> {
-    const file = join(dir, "shapes.txt");
-    if (!existsSync(file)) return Shapes.empty;
-    const builder = new ShapeBuilder();
-    await readCsv(file, (row) => {
-      const id = row("shape_id");
-      const sequence = Number(row("shape_pt_sequence"));
-      const lat = Number(row("shape_pt_lat"));
-      const lon = Number(row("shape_pt_lon"));
-      if (!id || !Number.isFinite(sequence) || !Number.isFinite(lat) || !Number.isFinite(lon)) {
-        throw new FeedError(`shapes.txt: bad row for shape "${id}"`);
-      }
-      const text = row("shape_dist_traveled");
-      builder.add(id, sequence, lat, lon, text === "" ? NaN : Number(text));
-    });
-    return new Shapes(builder.build());
-  }
-
-  /** Shapes built in memory, for tests: points as [lat, lon] or [lat, lon, dist]. */
-  static of(shapes: Record<string, number[][]>): Shapes {
-    const builder = new ShapeBuilder();
-    for (const [id, points] of Object.entries(shapes)) {
-      points.forEach(([lat, lon, dist], i) => builder.add(id, i, lat!, lon!, dist ?? NaN));
-    }
-    return new Shapes(builder.build());
-  }
-
-  get(id: string): Shape | undefined {
-    return id ? this.byId.get(id) : undefined;
-  }
-
-  get size(): number {
-    return this.byId.size;
-  }
-}
-
 /**
  * Collects points in file order into growing typed arrays, then groups them by shape and
  * sequence. A first version kept a JS number array per shape: for Prague that peaked about
@@ -135,7 +93,11 @@ class ShapeBuilder {
     this.dist = bigger(this.dist, (n) => new Float32Array(n));
   }
 
-  build(): Map<string, Shape> {
+  shapes(): Shapes {
+    return Shapes.fromColumns(this.build());
+  }
+
+  build(): ShapeColumns {
     const { n, counts } = this;
     // Counting sort by shape (keeps file order within a shape) ...
     const start = new Int32Array(counts.length + 1);
@@ -158,14 +120,92 @@ class ShapeBuilder {
       lon[to] = this.lon[from]!;
       dist[to] = this.dist[from]!;
     });
-    const byId = new Map<string, Shape>();
-    for (const [id, k] of this.ids) {
+    return { ids: [...this.ids.keys()], start, lat, lon, dist };
+  }
+}
+
+/**
+ * All shapes of a feed in five columns: the points of shape `ids[k]` are rows
+ * `start[k] .. start[k + 1] - 1`. This is also how the cache stores them.
+ */
+export interface ShapeColumns {
+  readonly ids: string[];
+  readonly start: Int32Array;
+  readonly lat: Int32Array;
+  readonly lon: Int32Array;
+  readonly dist: Float32Array;
+}
+
+export class Shapes {
+  private readonly byId = new Map<string, Shape>();
+
+  private constructor(readonly columns: ShapeColumns) {
+    const { ids, start, lat, lon, dist } = columns;
+    ids.forEach((id, k) => {
       const [s, e] = [start[k]!, start[k + 1]!];
       const d = dist.subarray(s, e);
       const measured = d.every((x, j) => !Number.isNaN(x) && (j === 0 || x >= d[j - 1]!));
-      byId.set(id, { lat: lat.subarray(s, e), lon: lon.subarray(s, e), dist: d, measured });
+      this.byId.set(id, { lat: lat.subarray(s, e), lon: lon.subarray(s, e), dist: d, measured });
+    });
+  }
+
+  static readonly empty = new Shapes({
+    ids: [],
+    start: new Int32Array(1),
+    lat: new Int32Array(0),
+    lon: new Int32Array(0),
+    dist: new Float32Array(0),
+  });
+
+  /** Read shapes.txt from a feed directory; a feed without one has no shapes. */
+  static async load(dir: string): Promise<Shapes> {
+    const file = join(dir, "shapes.txt");
+    if (!existsSync(file)) return Shapes.empty;
+    const builder = new ShapeBuilder();
+    await readCsv(file, (row) => {
+      const id = row("shape_id");
+      const sequence = Number(row("shape_pt_sequence"));
+      const lat = Number(row("shape_pt_lat"));
+      const lon = Number(row("shape_pt_lon"));
+      if (!id || !Number.isFinite(sequence) || !Number.isFinite(lat) || !Number.isFinite(lon)) {
+        throw new FeedError(`shapes.txt: bad row for shape "${id}"`);
+      }
+      const text = row("shape_dist_traveled");
+      builder.add(id, sequence, lat, lon, text === "" ? NaN : Number(text));
+    });
+    return builder.shapes();
+  }
+
+  /** Shapes built in memory, for tests: points as [lat, lon] or [lat, lon, dist]. */
+  static of(shapes: Record<string, number[][]>): Shapes {
+    const builder = new ShapeBuilder();
+    for (const [id, points] of Object.entries(shapes)) {
+      points.forEach(([lat, lon, dist], i) => builder.add(id, i, lat!, lon!, dist ?? NaN));
     }
-    return byId;
+    return builder.shapes();
+  }
+
+  /** Shapes from columns saved earlier (the cache); the columns are checked, not trusted. */
+  static fromColumns(columns: ShapeColumns): Shapes {
+    const { ids, start, lat, lon, dist } = columns;
+    const n = lat.length;
+    const ok =
+      start.length === ids.length + 1 &&
+      start[0] === 0 &&
+      start[ids.length] === n &&
+      lon.length === n &&
+      dist.length === n &&
+      start.every((s, k) => k === 0 || s >= start[k - 1]!);
+    if (!ok) throw new FeedError("shape columns don't fit together");
+    return new Shapes(columns);
+  }
+
+  get(id: string): Shape | undefined {
+    return id ? this.byId.get(id) : undefined;
+  }
+
+  get size(): number {
+    return this.byId.size;
   }
 }
 
