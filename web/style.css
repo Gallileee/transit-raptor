@@ -184,6 +184,11 @@ select:focus-visible,
   margin-bottom: 10px;
 }
 
+/* display: flex above would otherwise win over the hidden attribute and leave old names shown. */
+.suggestions[hidden] {
+  display: none;
+}
+
 .results {
   list-style: none;
   padding: 0;
