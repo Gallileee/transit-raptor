@@ -1,5 +1,36 @@
 # Progress log
 
+## 2026-11-14 (interactive): a new feed without a restart
+
+Why: next step 1. PID publishes a new feed every day; a `serve` left running kept planning on
+the old one until someone restarted it.
+
+Acceptance criteria:
+- `serve` notices new feed files (size or modification time) and switches to them.
+- Never reads a download in progress; never answers from a half-loaded feed; no request fails
+  or waits during the switch.
+- A broken download leaves the old feed in place, logged once, retried when the files change.
+
+Done:
+- `Planner.checkForNewFeed()` -> unchanged | waiting | reloaded | failed | busy. A changed
+  fingerprint must be seen twice in a row (settled); the new feed is opened (cache or CSV),
+  checked against the fingerprint again, today's timetable built on it, and only then swapped
+  in (dates of the old feed dropped). The fingerprint is taken before the first read, so a
+  change during it is noticed.
+- `serve --reload MIN` (default 5, 0 = off, at most 1440): an unref'd interval.
+- `scripts/fetch-pid.mjs`: extracts into `data/pid.new`, then swaps the folder (moving the cache
+  folder over), instead of deleting `data/pid` first.
+- Tests: `reload.test.ts` (7). 150 in total.
+
+Verified:
+- Mutations, each caught: no settle wait (4 tests fail), retrying a failed feed every time,
+  keeping the old feed's dates, no busy guard.
+- Real feed: `serve --reload 1` (launch config `transit-raptor-reload-demo`, port 8096); after
+  `touch data/pid/levels.txt`, the log showed the change, then a reload one check later (3.1 s,
+  cache rewritten). 70 API requests during the 2.5 minutes: all 200, none over 1 s.
+- Not verified: a real overnight download (fetch-pid's new swap was not run; it would replace
+  the 291 MB feed in use).
+
 ## 2026-11-14 (interactive): stops passed on a ride
 
 Why: next step 1. Since rides follow their shapes, the line no longer bends through the stops
@@ -453,10 +484,10 @@ Mutation checks: without the filter or without the level penalty, one test each 
 
 ## Next steps (in order)
 
-1. `serve`: notice a new feed download (fingerprint changed) and reload without a restart.
-2. Step-free changes at Muzeum A <-> C take 8 min, IDOS 3: look for a missing pathway (or an
+1. Step-free changes at Muzeum A <-> C take 8 min, IDOS 3: look for a missing pathway (or an
    in-station lift) before shortening anything.
-3. Street walks between a station's entrances in the normal graph too, after comparing the ~40
+2. Street walks between a station's entrances in the normal graph too, after comparing the ~40
    changes it would shorten (side-platform stations) with IDOS.
-4. Stops without a time in the feed (not timepoints) show the time they were filled in with;
+3. Stops without a time in the feed (not timepoints) show the time they were filled in with;
    interpolating by distance would be closer.
+4. Show on the page which timetable is in use (feed_info.txt dates, when it was loaded).
