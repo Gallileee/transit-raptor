@@ -1,7 +1,7 @@
 /** Turning journeys into text for the terminal. */
-import type { Feed } from "./gtfs.js";
+import { type CompiledFeed, coveredDates, type Feed } from "./gtfs.js";
 import type { Journey, Leg } from "./raptor.js";
-import { formatClock, minutesBetween } from "./time.js";
+import { dateKey, formatClock, formatDate, minutesBetween, type ServiceDate } from "./time.js";
 import { type Timetable, viaStreet } from "./timetable.js";
 
 const MODES: Record<number, string> = {
@@ -53,4 +53,23 @@ export function formatJourney(feed: Feed, journey: Journey, timetable?: Timetabl
     `  (${minutes(journey.departure, journey.arrival)}, ` +
     `${journey.transfers === 0 ? "direct" : `${journey.transfers} transfer${journey.transfers > 1 ? "s" : ""}`})`;
   return [header, ...journey.legs.map((leg) => formatLeg(feed, leg, timetable))].join("\n");
+}
+
+/**
+ * A note for a date outside the dates the feed covers: some lines may still run then (PID's
+ * trains are published for the whole year, the rest two weeks ahead), so journeys can be found,
+ * but a better one may be missing.
+ */
+export function coverageNote(compiled: Pick<CompiledFeed, "calendar" | "published">, date: ServiceDate): string | undefined {
+  const range = coveredDates(compiled);
+  if (!range) return undefined;
+  const key = dateKey(date);
+  const where =
+    key > dateKey(range.last)
+      ? `after the timetable's last date, ${formatDate(range.last)}`
+      : key < dateKey(range.first)
+        ? `before the timetable's first date, ${formatDate(range.first)}`
+        : "";
+  if (!where) return undefined;
+  return `Note: ${formatDate(date)} is ${where}: only lines whose timetables reach that day are included, so a better journey may be missing.`;
 }

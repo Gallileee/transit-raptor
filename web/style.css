@@ -329,3 +329,10 @@ select:focus-visible,
   color: var(--error);
   font-weight: 600;
 }
+
+.notice {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border-left: 3px solid var(--error);
+  color: var(--error);
+}

@@ -8,10 +8,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { openFeed } from "../src/cache.js";
+import { main } from "../src/cli.js";
+import { coverageNote } from "../src/format.js";
 import { type Calendar, type CalendarEntry, coveredDates, readCalendar, serviceRange } from "../src/gtfs.js";
 import { createAppServer } from "../src/server.js";
 import { Planner } from "../src/service.js";
-import { formatDate } from "../src/time.js";
+import { formatDate, parseDate } from "../src/time.js";
 
 const MINI = join(import.meta.dirname, "fixtures", "mini");
 
@@ -155,5 +157,56 @@ describe("GET /api/feed", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(await response.json()).toEqual({ firstDate: "2026-11-02", lastDate: "2026-11-30", loadedAt: "2026-11-10T06:58:00.000Z" });
+  });
+});
+
+describe("a date outside the timetable", () => {
+  const published = { start: 20261109, end: 20261122 };
+  const calendar: Calendar = { entries: [entry(20251215, 20261211)], exceptions: [] };
+
+  it("gets a note saying a better journey may be missing", () => {
+    expect(coverageNote({ calendar, published }, parseDate("2026-11-25"))).toBe(
+      "Note: 2026-11-25 is after the timetable's last date, 2026-11-22: only lines whose timetables reach that day are included, so a better journey may be missing.",
+    );
+    expect(coverageNote({ calendar, published }, parseDate("2026-11-06"))).toMatch(
+      /^Note: 2026-11-06 is before the timetable's first date, 2026-11-09: /,
+    );
+  });
+
+  it("gets no note inside it, on its first and last date, or when the feed gives no dates", () => {
+    for (const date of ["2026-11-09", "2026-11-15", "2026-11-22"]) {
+      expect(coverageNote({ calendar, published }, parseDate(date))).toBeUndefined();
+    }
+    const nothing: Calendar = { entries: [], exceptions: [] };
+    expect(coverageNote({ calendar: nothing, published: { start: null, end: null } }, parseDate("2026-11-25"))).toBeUndefined();
+  });
+
+  describe("in the CLI", () => {
+    const dir = mkdtempSync(join(tmpdir(), "transit-raptor-outside-"));
+    cpSync(MINI, dir, { recursive: true });
+    // The timetable ends on 30 Nov, but the holiday bus is published for 2 Dec too.
+    writeFileSync(join(dir, "feed_info.txt"), "feed_start_date,feed_end_date\n20261102,20261130\n");
+    writeFileSync(join(dir, "calendar_dates.txt"), `${readFileSync(join(MINI, "calendar_dates.txt"), "utf8")}EXTRA,20261202,1\n`);
+    afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+    const run = async (date: string) => {
+      const out: string[] = [];
+      const err: string[] = [];
+      const io = { out: (l: string) => out.push(l), err: (l: string) => err.push(l), now: () => new Date(2026, 10, 10) };
+      const args = ["plan", "--gtfs", dir, "--from", "alpha", "--to", "delta", "--date", date, "--time", "08:50", "--no-cache"];
+      return { code: await main(args, io), out: out.join("\n"), notes: err.filter((l) => l.startsWith("Note:")) };
+    };
+
+    it("plans the journeys there are, with the note", async () => {
+      const { code, out, notes } = await run("2026-12-02");
+      expect(code).toBe(0);
+      expect(out).toContain("09:00 -> 09:40");
+      expect(notes).toEqual([expect.stringMatching(/^Note: 2026-12-02 is after the timetable's last date, 2026-11-30: /)]);
+    });
+
+    it("says it also when nothing runs, and not inside the timetable", async () => {
+      expect((await run("2026-12-03")).notes).toHaveLength(1);
+      expect((await run("2026-11-10")).notes).toEqual([]);
+    });
   });
 });

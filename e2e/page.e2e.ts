@@ -175,6 +175,36 @@ test("after the timetable's last date, the footer warns and a search says why th
   await expect(page.locator("#feed")).toHaveCSS("font-weight", "600");
 });
 
+test("journeys on a date outside the timetable come with a notice that some lines are missing", async ({ page }) => {
+  await page.clock.setFixedTime(new Date(2026, 10, 10, 8, 0));
+  const notice = page.locator("#notice");
+  // As if the timetable ended on 9 Nov while some lines are published for the 10th as well.
+  let lastDate = "2026-11-09";
+  await page.route("**/api/plan?*", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    body.feed = { ...body.feed, lastDate };
+    await route.fulfill({ response, json: body });
+  });
+  await page.goto(searchUrl({ from: "alpha", to: "delta", time: "08:00", ...TUESDAY }));
+  await expect(journeys(page)).toHaveCount(2);
+  await expect(notice).toBeVisible();
+  await expect(notice).toHaveText(
+    "10 Nov 2026 is after the timetable's last date, 9 Nov 2026: only lines whose timetables reach that day are included, so a better journey may be missing.",
+  );
+  // The next search, on the timetable's last day, takes the notice away.
+  lastDate = "2026-11-10";
+  await page.getByRole("button", { name: "Find journeys" }).click();
+  await expect(journeys(page)).toHaveCount(2);
+  await expect(notice).toBeHidden();
+});
+
+test("no notice on a date the timetable covers", async ({ page }) => {
+  await page.goto(searchUrl({ from: "alpha", to: "delta", time: "08:00", ...TUESDAY }));
+  await expect(journeys(page)).toHaveCount(2);
+  await expect(page.locator("#notice")).toBeHidden();
+});
+
 test("the footer follows the timetable each answer came from (the server swapped in a new one)", async ({ page }) => {
   await page.clock.setFixedTime(new Date(2026, 10, 10, 8, 0));
   // As if a new download had been loaded since the page opened: the answer says so.
