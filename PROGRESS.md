@@ -1,5 +1,35 @@
 # Progress log
 
+## 2026-11-14 (interactive): a notice for journeys outside the timetable
+
+Why: next step 3, picked by the user. After feed_end_date (22 Nov) PID's feed still has its
+train services (published for the whole year), so a search on 25 Nov finds a train journey and
+shows it like any other, while trams, buses and metro are simply missing from it.
+
+Acceptance criteria:
+- Journeys on a date before or after the dates the timetable covers come with a notice that
+  only some lines are included and a better journey may be missing; none inside, including
+  its first and last day.
+- The page and the CLI both say it.
+
+Done:
+- Page: `<p id="notice">` under the status, hidden on every new search, filled from the dates
+  in the answer's `feed` ("25 Nov 2026 is after the timetable's last date, 22 Nov 2026: only
+  lines whose timetables reach that day are included, so a better journey may be missing.").
+- CLI: `format.coverageNote(compiled, date)` (uses `coveredDates`), printed on stderr by `plan`,
+  also when nothing is found.
+- Tests: 4 unit tests (`feed-info.test.ts`; the CLI on a copy of the test feed whose
+  feed_info.txt ends on 30 Nov while the holiday bus is added on 2 Dec), 2 browser tests
+  (the notice, gone on the timetable's last day; none inside). 172 unit tests, 18 browser tests.
+
+Verified:
+- Mutations, each caught: the notice not hidden on a new search, never shown, shown on the last
+  day (page; first missed, the test now searches on the last day), the CLI's last-day and
+  first-day bounds, the CLI not printing it.
+- Real feed: 25 Nov has 2,901 trips (16 Nov: 52,265). `plan` Praha-Smíchov -> Praha-Libeň on
+  25 Nov: R26 + R41 with the note; the page shows the journey with the notice in red; on
+  16 Nov no notice.
+
 ## 2026-11-14 (interactive): the step-free change at Muzeum A <-> C
 
 Why: next step 1, picked by the user. A step-free change at Muzeum took 8 minutes here and
@@ -572,7 +602,5 @@ Mutation checks: without the filter or without the level penalty, one test each 
    changes it would shorten (side-platform stations) with IDOS.
 2. Stops without a time in the feed (not timepoints) show the time they were filled in with;
    interpolating by distance would be closer.
-3. A search after feed_end_date can still find trains (their services run all year): say that
-   only some lines are in the timetable for that date.
-4. Hlavní nádraží (C) and Černý Most (B): check whether the two tracks share an island platform
+3. Hlavní nádraží (C) and Černý Most (B): check whether the two tracks share an island platform
    the feed doesn't join (the step-free change between them goes out to the street).

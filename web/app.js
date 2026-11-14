@@ -83,6 +83,7 @@ async function search() {
   history.replaceState(null, "", `?${query}`);
 
   setStatus("Searching…");
+  $("notice").hidden = true;
   suggestionsBox.hidden = true;
   results.replaceChildren();
   drawn.clearLayers();
@@ -113,10 +114,31 @@ async function search() {
     );
     return;
   }
+  showNotice(body.date);
   const kind = stepFree ? " step-free" : "";
   setStatus(`${body.from} → ${body.to}, ${body.date}: ${journeys.length}${kind} journey${journeys.length > 1 ? "s" : ""} (${ms} ms)`);
   results.replaceChildren(...journeys.map(journeyItem));
   select(0);
+}
+
+/**
+ * A date outside the timetable can still have journeys: PID's trains are published for the
+ * whole year, the rest two weeks ahead. Then the journeys shown may not be the best ones.
+ */
+function showNotice(date) {
+  if (!feed?.firstDate) return;
+  const where =
+    date > feed.lastDate
+      ? `after the timetable's last date, ${day(feed.lastDate)}`
+      : date < feed.firstDate
+        ? `before the timetable's first date, ${day(feed.firstDate)}`
+        : "";
+  if (!where) return;
+  const notice = $("notice");
+  notice.textContent =
+    `${day(date)} is ${where}: only lines whose timetables reach that day are included, ` +
+    "so a better journey may be missing.";
+  notice.hidden = false;
 }
 
 function setStatus(text, error = false) {

@@ -8,7 +8,7 @@
  * Exit codes: 0 = journeys found (or stops listed), 1 = no journey, 2 = bad input or feed.
  */
 import { parseArgs } from "node:util";
-import { formatJourney } from "./format.js";
+import { coverageNote, formatJourney } from "./format.js";
 import { defaultCacheDir, openFeed } from "./cache.js";
 import { FeedError, feedForDate } from "./gtfs.js";
 import { type Journey, plan, profile } from "./raptor.js";
@@ -139,6 +139,8 @@ async function run(argv: string[], io: Io): Promise<number> {
     `Loaded ${feed.trips.length} trips on ${formatDate(date)} (${timetable.patterns.length} patterns, ` +
       `${feed.stops.length} stops) in ${Math.round(loaded - started)} ms; search ${Math.round(searched - loaded)} ms`,
   );
+  const note = coverageNote(compiled, date);
+  if (note) io.err(note);
   if (journeys.length === 0) {
     const how = values["step-free"] ? " step-free" : "";
     io.out(`No${how} journey from ${from.name} to ${to.name} with at most ${maxTransfers} transfers.`);

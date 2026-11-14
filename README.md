@@ -195,7 +195,10 @@ keeps the two most recently used dates in memory, and serves:
   map, every leg in its line's colour from `routes.txt`, walks dashed. The search is kept in
   the URL, so a result can be shared or bookmarked. The footer says which timetable is in use:
   the dates it covers and when the server loaded it, in red once its last date has passed. A
-  search on a date it doesn't cover says so instead of just "no journey".
+  search on a date it doesn't cover says so instead of just "no journey"; and when it does find
+  journeys there (PID's trains are published for the whole year, everything else two weeks
+  ahead), a notice says only some lines are included, so a better journey may be missing.
+  `plan` prints the same note on stderr.
 - `GET /api/plan?from=&to=[&date=YYYY-MM-DD][&time=HH:MM][&window=MIN][&maxTransfers=N][&list=1][&stepFree=1]`:
   the journeys as JSON, with names, times, line colours, the line to draw (`path`: along the
   street from `shapes.txt` when `shape` is true, otherwise straight between the stops passed)
