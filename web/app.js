@@ -16,6 +16,8 @@ const drawn = L.layerGroup().addTo(map);
 
 let journeys = [];
 let stepFree = false;
+/** The timetable in use: { firstDate, lastDate, loadedAt } from the API. */
+let feed;
 
 // --- form defaults and the URL --------------------------------------------------------------
 
@@ -100,9 +102,15 @@ async function search() {
   }
   journeys = body.journeys;
   stepFree = body.stepFree;
+  showFeed(body.feed);
   const ms = Math.round(performance.now() - started);
   if (journeys.length === 0) {
-    setStatus(`No${stepFree ? " step-free" : ""} journey from ${body.from} to ${body.to}.`);
+    const outside = feed.firstDate && (body.date < feed.firstDate || body.date > feed.lastDate);
+    setStatus(
+      outside
+        ? `No journeys on ${day(body.date)}: the timetable covers ${day(feed.firstDate)} to ${day(feed.lastDate)}.`
+        : `No${stepFree ? " step-free" : ""} journey from ${body.from} to ${body.to}.`,
+    );
     return;
   }
   const kind = stepFree ? " step-free" : "";
@@ -134,6 +142,51 @@ function showSuggestions(names, error) {
   );
   suggestionsBox.hidden = false;
 }
+
+// --- the timetable in use -------------------------------------------------------------------
+
+/** "2026-11-30" -> "30 Nov 2026". */
+function day(iso) {
+  return new Date(`${iso}T00:00`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+}
+
+/**
+ * In the footer: the dates the timetable covers and when the server loaded it. Every answer
+ * carries this, so after the server swaps in a new download the page shows the new one.
+ */
+function showFeed(info) {
+  if (!info) return;
+  feed = info;
+  const box = $("feed");
+  const loaded = new Date(info.loadedAt).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  const today = isoToday();
+  let text;
+  let warn = false;
+  if (!info.firstDate) {
+    text = "no dates with service";
+    warn = true;
+  } else if (today > info.lastDate) {
+    text = `ended on ${day(info.lastDate)}`;
+    warn = true;
+  } else if (today < info.firstDate) {
+    text = `starts on ${day(info.firstDate)}`;
+    warn = true;
+  } else {
+    text = `valid ${day(info.firstDate)} to ${day(info.lastDate)}`;
+  }
+  box.textContent = `, ${text} (loaded ${loaded})`;
+  box.classList.toggle("warn", warn);
+}
+
+function isoToday() {
+  const d = new Date();
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+// A search answered first (one in the URL) already told us, and may be newer.
+fetch("/api/feed")
+  .then((response) => (response.ok ? response.json() : undefined))
+  .then((info) => feed || showFeed(info), () => {});
 
 // --- showing journeys -----------------------------------------------------------------------
 

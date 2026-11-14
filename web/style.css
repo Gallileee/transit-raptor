@@ -324,3 +324,8 @@ select:focus-visible,
     overflow: visible;
   }
 }
+
+.footer .warn {
+  color: var(--error);
+  font-weight: 600;
+}

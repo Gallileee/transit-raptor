@@ -119,7 +119,7 @@ describe("openFeed", () => {
 
   it("rebuilds when a file appears that wasn't there", async () => {
     const before = fingerprint(feedDir());
-    writeFileSync(join(feedDir(), "feed_info.txt"), "ignored\n"); // not a file it reads
+    writeFileSync(join(feedDir(), "agency.txt"), "ignored\n"); // not a file it reads
     expect(fingerprint(feedDir())).toBe(before);
     rmSync(join(feedDir(), "levels.txt"));
     expect(fingerprint(feedDir())).not.toBe(before);

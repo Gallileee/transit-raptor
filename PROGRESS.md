@@ -1,5 +1,44 @@
 # Progress log
 
+## 2026-11-14 (interactive): which timetable is in use, on the page
+
+Why: next step 4, picked by the user. Since the server swaps in new feeds by itself, nothing
+showed which timetable a page was planning on, or that it had run out.
+
+Acceptance criteria:
+- The page shows the dates the timetable covers and when the server loaded it, and follows a
+  reload without the page being reloaded.
+- A timetable whose last date has passed is pointed out; a search on a date outside it says
+  why there is nothing.
+- The dates are the ones the publisher gives, not a range that only some lines reach.
+
+Done:
+- `gtfs.ts`: `feed_info.txt` read into `CompiledFeed.published` (feed_start_date and
+  feed_end_date, each optional) and added to the files the cache fingerprint covers; cache
+  `FORMAT` 2 (an old cache is ignored once and rewritten). `serviceRange(calendar)`: first and
+  last date with service, each end moved in to a day something runs. `coveredDates()`:
+  feed_info's dates, the calendar's for the missing ones.
+- `service.ts`: `FeedInfo {firstDate, lastDate, loadedAt}`, one per opened feed (so its time
+  is when that feed was loaded); `Planner.feed()`, and `feed` in every plan answer.
+  `GET /api/feed`.
+- Page: the footer shows "valid 9 Nov 2026 to 22 Nov 2026 (loaded 14 Nov, 18:30)", or "ended
+  on ..." / "starts on ..." in red; it is updated from every plan answer. No journeys on a date
+  outside the timetable: "No journeys on 25 Nov 2026: the timetable covers ...".
+- Tests: `feed-info.test.ts` (14), 3 browser tests (the footer, after the last date, a reload
+  seen through a changed plan answer). 164 unit tests, 15 browser tests.
+
+Found on the real feed: the first version took the dates from the calendar alone and showed
+"valid 13 Dec 2025 to 12 Dec 2026". PID's train services (`*_TR*`) run all year in
+calendar.txt; buses, trams and metro only to feed_end_date (22 Nov). Hence feed_info first.
+
+Verified:
+- Mutations, each caught: the page not taking `feed` from plan answers, no "ended" branch, the
+  range's end not moved in to a day with service, a new load time for every date.
+  Not caught (and equivalent outside a reload's last moment): taking the info from the planner
+  instead of the loaded date.
+- Real feed (`transit-raptor-reload-demo`): the old format-1 cache was ignored and rewritten;
+  footer "valid 9 Nov 2026 to 22 Nov 2026"; 25 Nov gave the out-of-range message; after touch data/pid/levels.txt the server reloaded (3.0 s) and the next search, without reloading the page, changed the footer from loaded 18:30 to 18:32.
+
 ## 2026-11-14 (interactive): a new feed without a restart
 
 Why: next step 1. PID publishes a new feed every day; a `serve` left running kept planning on
@@ -490,4 +529,5 @@ Mutation checks: without the filter or without the level penalty, one test each 
    changes it would shorten (side-platform stations) with IDOS.
 3. Stops without a time in the feed (not timepoints) show the time they were filled in with;
    interpolating by distance would be closer.
-4. Show on the page which timetable is in use (feed_info.txt dates, when it was loaded).
+4. A search after feed_end_date can still find trains (their services run all year): say that
+   only some lines are in the timetable for that date.

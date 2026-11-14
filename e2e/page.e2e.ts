@@ -150,6 +150,39 @@ test("says when there is no step-free journey", async ({ page }) => {
   await expect(journeys(page)).toHaveCount(0);
 });
 
+test("the footer says which dates the timetable covers and when the server loaded it", async ({ page }) => {
+  await page.clock.setFixedTime(new Date(2026, 10, 10, 8, 0));
+  await page.goto("/");
+  const feed = page.locator("#feed");
+  await expect(feed).toHaveText(/^, valid 2 Nov 2026 to 30 Nov 2026 \(loaded \d{1,2} \w{3}, \d{2}:\d{2}\)$/);
+  await expect(feed).not.toHaveClass(/warn/);
+});
+
+test("after the timetable's last date, the footer warns and a search says why there is nothing", async ({ page }) => {
+  await page.clock.setFixedTime(new Date(2026, 11, 5, 8, 0));
+  await page.goto(searchUrl({ from: "alpha", to: "delta", time: "08:00", date: "2026-12-05" }));
+  await expect(status(page)).toHaveText("No journeys on 5 Dec 2026: the timetable covers 2 Nov 2026 to 30 Nov 2026.");
+  await expect(page.locator("#feed")).toContainText("ended on 30 Nov 2026");
+  await expect(page.locator("#feed")).toHaveClass(/warn/);
+  await expect(page.locator("#feed")).toHaveCSS("font-weight", "600");
+});
+
+test("the footer follows the timetable each answer came from (the server swapped in a new one)", async ({ page }) => {
+  await page.clock.setFixedTime(new Date(2026, 10, 10, 8, 0));
+  // As if a new download had been loaded since the page opened: the answer says so.
+  await page.route("**/api/plan?*", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    body.feed = { ...body.feed, lastDate: "2026-12-07", loadedAt: "2026-11-10T06:30:00.000Z" };
+    await route.fulfill({ response, json: body });
+  });
+  await page.goto("/");
+  await expect(page.locator("#feed")).toContainText("to 30 Nov 2026");
+  await page.goto(searchUrl({ from: "alpha", to: "delta", time: "08:00", ...TUESDAY }));
+  await expect(journeys(page)).toHaveCount(2);
+  await expect(page.locator("#feed")).toContainText("to 7 Dec 2026");
+});
+
 test("line badges use the feed's colours, and only valid ones", async ({ page }) => {
   await page.goto(searchUrl({ from: "alpha", to: "echo", time: "08:55", ...TUESDAY }));
   const badges = journeys(page).first().locator(".badge:not(.walk)");

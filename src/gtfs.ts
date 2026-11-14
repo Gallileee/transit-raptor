@@ -16,7 +16,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { readCsv } from "./csv.js";
-import { addDays, DAY, dateKey, parseTime, type ServiceDate, weekday } from "./time.js";
+import { addDays, DAY, dateKey, parseDate, parseTime, type ServiceDate, weekday } from "./time.js";
 
 export class FeedError extends Error {}
 
@@ -171,7 +171,15 @@ export interface CompiledFeed {
   readonly columns: StopTimeColumns;
   readonly transfers: FeedTransfer[];
   readonly pathways: Pathway[];
+  /** feed_info.txt's feed_start_date and feed_end_date (YYYYMMDD), when it gives them. */
+  readonly published: PublishedDates;
   readonly stats: { stopTimesRead: number; tripsInFeed: number };
+}
+
+/** The dates the publisher vouches for; either can be missing (both are optional in GTFS). */
+export interface PublishedDates {
+  readonly start: number | null;
+  readonly end: number | null;
 }
 
 const REQUIRED = ["stops.txt", "routes.txt", "trips.txt", "stop_times.txt"];
@@ -185,6 +193,7 @@ export const FEED_FILES = [
   "transfers.txt",
   "pathways.txt",
   "shapes.txt",
+  "feed_info.txt",
 ];
 
 const DAY_COLUMNS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
@@ -232,6 +241,78 @@ export function servicesOn(calendar: Calendar, date: ServiceDate): Set<string> {
     else active.delete(exception.serviceId);
   }
   return active;
+}
+
+/** The first and last date anything runs, or undefined for a feed where nothing ever runs. */
+export interface ServiceRange {
+  readonly first: ServiceDate;
+  readonly last: ServiceDate;
+}
+
+/**
+ * The dates the feed covers: from the first day some service runs to the last. The bounds come
+ * from calendar.txt ranges and added dates; a range can start on a day its weekdays skip (PID's
+ * weekday services from a Sunday), so each end is moved in to the nearest day that has service.
+ */
+export function serviceRange(calendar: Calendar): ServiceRange | undefined {
+  let low = Infinity;
+  let high = -Infinity;
+  for (const entry of calendar.entries) {
+    if (!entry.days.includes(true) || entry.end < entry.start) continue;
+    low = Math.min(low, entry.start);
+    high = Math.max(high, entry.end);
+  }
+  for (const exception of calendar.exceptions) {
+    if (exception.type !== 1) continue;
+    low = Math.min(low, exception.date);
+    high = Math.max(high, exception.date);
+  }
+  if (low > high) return undefined;
+  let first = fromDateKey(low);
+  let last = fromDateKey(high);
+  while (dateKey(first) <= high && servicesOn(calendar, first).size === 0) first = addDays(first, 1);
+  if (dateKey(first) > high) return undefined; // every date removed again
+  while (servicesOn(calendar, last).size === 0) last = addDays(last, -1);
+  return { first, last };
+}
+
+/** feed_info.txt (optional, one row): the period the feed is complete and reliable for. */
+export async function readPublishedDates(dir: string): Promise<PublishedDates> {
+  const path = join(dir, "feed_info.txt");
+  let dates: PublishedDates = { start: null, end: null };
+  if (!existsSync(path)) return dates;
+  const key = (text: string) => {
+    if (!/^\s*\d{8}\s*$/.test(text)) return null;
+    try {
+      return dateKey(parseDate(text)); // no 13th month or 31 April
+    } catch {
+      return null;
+    }
+  };
+  let first = true;
+  await readCsv(path, (row) => {
+    if (first) dates = { start: key(row("feed_start_date")), end: key(row("feed_end_date")) };
+    first = false;
+  });
+  return dates;
+}
+
+/**
+ * The dates the feed covers, for telling people: feed_info.txt's dates where it gives them,
+ * the calendar's otherwise. The calendar alone can say too much: PID's train services run all
+ * year in calendar.txt while the rest of the feed (and feed_end_date) stops two weeks ahead.
+ */
+export function coveredDates(compiled: Pick<CompiledFeed, "calendar" | "published">): ServiceRange | undefined {
+  const calendar = serviceRange(compiled.calendar);
+  const { start, end } = compiled.published;
+  const first = start !== null ? fromDateKey(start) : calendar?.first;
+  const last = end !== null ? fromDateKey(end) : calendar?.last;
+  if (!first || !last || dateKey(first) > dateKey(last)) return undefined;
+  return { first, last };
+}
+
+function fromDateKey(key: number): ServiceDate {
+  return { year: Math.floor(key / 10000), month: Math.floor(key / 100) % 100, day: key % 100 };
 }
 
 /** Which service_ids run on `date`, from calendar.txt and calendar_dates.txt. */
@@ -394,7 +475,8 @@ export async function compileFeed(dir: string): Promise<CompiledFeed> {
     });
   }
 
-  return { stops, routes, calendar, trips, columns, transfers, pathways, stats: { stopTimesRead, tripsInFeed } };
+  const published = await readPublishedDates(dir);
+  return { stops, routes, calendar, trips, columns, transfers, pathways, published, stats: { stopTimesRead, tripsInFeed } };
 }
 
 /**
