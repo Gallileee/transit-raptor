@@ -3,7 +3,7 @@
  * turned into plain JSON (names, times, colours, coordinates) for the web page.
  */
 import { fingerprint, type OpenedFeed, openFeed } from "./cache.js";
-import { type Access, type Feed, feedForDate } from "./gtfs.js";
+import { type Access, coveredDates, type Feed, feedForDate } from "./gtfs.js";
 import { type Journey, type Leg, plan, profile } from "./raptor.js";
 import { cut, type LatLon, type Shapes } from "./shapes.js";
 import { StopIndex, type StopMatch } from "./stops.js";
@@ -29,6 +29,37 @@ export interface Loaded {
   readonly tripById: Map<string, Feed["trips"][number]>;
   /** Street geometry; shared by all dates (shapes don't change from day to day). */
   readonly shapes: Shapes;
+  /** Which timetable this is: the same for every date loaded from one feed. */
+  readonly info: FeedInfo;
+}
+
+/** The timetable in use, for the page: the dates it covers and when the server loaded it. */
+export interface FeedInfo {
+  /**
+   * The dates it covers, YYYY-MM-DD: feed_info.txt's feed_start_date and feed_end_date, or the
+   * first and last date with service when it doesn't say. Empty when neither is known.
+   */
+  firstDate: string;
+  lastDate: string;
+  /** When this server loaded the feed (ISO 8601, UTC); a reload changes it. */
+  loadedAt: string;
+}
+
+/** One FeedInfo per opened feed, made when the first date is loaded from it. */
+const infos = new WeakMap<OpenedFeed, FeedInfo>();
+
+function feedInfo(opened: OpenedFeed, now: Date): FeedInfo {
+  let info = infos.get(opened);
+  if (!info) {
+    const range = coveredDates(opened.compiled);
+    info = {
+      firstDate: range ? formatDate(range.first) : "",
+      lastDate: range ? formatDate(range.last) : "",
+      loadedAt: now.toISOString(),
+    };
+    infos.set(opened, info);
+  }
+  return info;
 }
 
 const MODES: Record<number, string> = {
@@ -115,6 +146,8 @@ export interface PlanResponse {
   time: string;
   stepFree: boolean;
   journeys: JourneyJson[];
+  /** The timetable that answered: after a reload the page sees the new one. */
+  feed: FeedInfo;
 }
 
 /** What `checkForNewFeed` did. */
@@ -168,7 +201,8 @@ export class Planner {
       this.cache.set(key, cached);
       return cached;
     }
-    const loading = this.open().then(({ compiled, shapes }) => {
+    const loading = this.open().then((opened) => {
+      const { compiled, shapes } = opened;
       const feed = feedForDate(compiled, date);
       let stepFree: Timetable | undefined;
       return {
@@ -178,6 +212,7 @@ export class Planner {
         index: new StopIndex(feed.stops),
         tripById: new Map(feed.trips.map((t) => [t.id, t])),
         shapes,
+        info: feedInfo(opened, this.now()),
       };
     });
     loading.catch(() => {
@@ -242,6 +277,11 @@ export class Planner {
     return { year: now.getFullYear(), month: now.getMonth() + 1, day: now.getDate() };
   }
 
+  /** The timetable in use (opening the feed if no request has yet). */
+  async feed(): Promise<FeedInfo> {
+    return feedInfo(await this.open(), this.now());
+  }
+
   /** Stop names for an autocomplete box. */
   async stops(text: string, date?: string): Promise<string[]> {
     const { index } = await this.load(date ? parseDate(date) : this.today());
@@ -275,6 +315,7 @@ export class Planner {
       time: formatClock(departAt),
       stepFree,
       journeys: journeys.map((j) => journeyJson(loaded, j)),
+      feed: loaded.info,
     };
   }
 }

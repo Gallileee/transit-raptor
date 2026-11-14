@@ -3,6 +3,7 @@
  *
  *   GET /api/stops?q=andel[&date=YYYY-MM-DD]          -> ["Anděl"]
  *   GET /api/plan?from=&to=[&date=][&time=HH:MM][&window=MIN][&maxTransfers=N][&list=1][&stepFree=1]
+ *   GET /api/feed  -> {"firstDate":"2026-11-09","lastDate":"2026-11-22","loadedAt":"2026-11-14T16:24:05.120Z"}
  *   GET /, /app.js, /style.css                        -> the page
  *
  * Only node:http, no framework: three routes don't need one. It listens on 127.0.0.1 unless told
@@ -70,6 +71,10 @@ async function handle(planner: Planner, req: IncomingMessage, res: ServerRespons
     if (url.pathname === "/api/stops") {
       const q = url.searchParams.get("q") ?? "";
       json(res, 200, q.trim() ? await planner.stops(q, url.searchParams.get("date") ?? undefined) : []);
+      return;
+    }
+    if (url.pathname === "/api/feed") {
+      json(res, 200, await planner.feed());
       return;
     }
     if (url.pathname === "/api/plan") {

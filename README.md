@@ -192,13 +192,21 @@ keeps the two most recently used dates in memory, and serves:
 
 - `/`: a form (stop names suggested as you type), the journeys, and the selected journey on a
   map, every leg in its line's colour from `routes.txt`, walks dashed. The search is kept in
-  the URL, so a result can be shared or bookmarked.
+  the URL, so a result can be shared or bookmarked. The footer says which timetable is in use:
+  the dates it covers and when the server loaded it, in red once its last date has passed. A
+  search on a date it doesn't cover says so instead of just "no journey".
 - `GET /api/plan?from=&to=[&date=YYYY-MM-DD][&time=HH:MM][&window=MIN][&maxTransfers=N][&list=1][&stepFree=1]`:
   the journeys as JSON, with names, times, line colours, the line to draw (`path`: along the
   street from `shapes.txt` when `shape` is true, otherwise straight between the stops passed)
   and, per ride, `access`: `yes` (vehicle and both stops marked step-free), `no`
   or `unknown`. The step-free timetable of a date is built on its first use (~0.4 s) and kept.
+  `feed` says which timetable answered (as `/api/feed`), so the page notices a reload.
 - `GET /api/stops?q=TEXT[&date=]`: stop names for the suggestions.
+- `GET /api/feed`: the timetable in use, `{"firstDate":"2026-11-09","lastDate":"2026-11-22",
+  "loadedAt":"2026-11-14T17:30:12.345Z"}`. The dates are `feed_start_date` and `feed_end_date`
+  from `feed_info.txt`, or the first and last date with service in the calendar when the feed
+  doesn't give them. For PID the calendar alone would say "until 12 Dec 2026": its train
+  services run all year in `calendar.txt`, while the rest of the feed stops two weeks ahead.
 
 Bad input gets `400` with a message, and for an unknown or ambiguous stop a list of names to
 pick from; a feed that can't be loaded gets `503`. The server listens on 127.0.0.1 unless told
@@ -243,8 +251,8 @@ files). CI runs them on Node 22 and 24, runs the built CLI, and checks its own w
 a search from the URL and from the form (with stop-name suggestions, and the search kept in
 the URL across a reload), picking a journey by click, keyboard and tap and the map redrawn
 (lines, dashed walks, dots, all inside the visible map), an ambiguous and an unknown stop, the
-step-free checkbox, line colours from the feed, durations that match the times shown, phone
-width and dark mode. It runs without the internet: Leaflet is served from `node_modules`
+step-free checkbox, line colours from the feed, durations that match the times shown, the
+timetable in the footer (in use, ended, and replaced by a reload), phone width and dark mode. It runs without the internet: Leaflet is served from `node_modules`
 (the page's integrity hashes prove it is the cdnjs file), map tiles are a blank image, and any
 other outside request, console error or exception fails the test. CI runs it as its own job
 and keeps the report and traces when it fails.
