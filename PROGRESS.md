@@ -1,5 +1,35 @@
 # Progress log
 
+## 2026-11-14 (interactive): browser tests for the page (Playwright)
+
+Why: next step 1. The page had only been checked by hand (twice), and that check found a bug.
+
+Acceptance criteria:
+- The page's main paths run in a real browser in CI: search from the URL and the form, stop
+  suggestions, picking a journey (click, keyboard, touch), the map, errors, step-free, colours,
+  phone width, dark mode.
+- No outside network: the tests must not depend on cdnjs or load OpenStreetMap tiles.
+- Console errors and exceptions fail a test.
+
+Done:
+- `@playwright/test` 1.64.1 (exact; 1.65.1 was a day old) and `leaflet` 1.9.4 (exact) as dev
+  dependencies. `playwright.config.ts` starts the built server on the test feed (port 8097,
+  `--no-cache`); `PLAYWRIGHT_CHANNEL` uses an installed browser instead of downloading one.
+- `e2e/fixtures.ts`: routes cdnjs Leaflet to node_modules (identical bytes, checked with cmp
+  against cdnjs; the page's SRI hashes check it on every run), tiles to a blank PNG, everything
+  else outside fails the test; console errors fail it, except the 400 the API answers for a
+  bad stop (the page shows that answer).
+- `e2e/page.e2e.ts`: 11 tests. `npm run test:e2e`. CI job `e2e` (Node 24, Chromium; report and
+  traces uploaded on failure via actions/upload-artifact pinned to v7.0.2).
+- Bug found by the tests: the suggestion buttons stayed on screen after picking a name, because
+  `.suggestions { display: flex }` beat the `hidden` attribute. Fixed with `.suggestions[hidden]`.
+
+Verified (local, Edge via PLAYWRIGHT_CHANNEL=msedge):
+- 11 passed; `npm test` 139 passed; typecheck clean; workflow-guard on ci.yml: 0 findings.
+- Mutations in web/app.js, each caught: no URL update (2 tests fail), step-free not sent (2),
+  walks not dashed (1), the second journey selected first (4); the CSS fix reverted (1).
+- Not caught: removing `map.invalidateSize()` (see the README's limitations).
+
 ## 2026-11-14 (interactive): browser check of step-free and shaped lines; duration fix
 
 Why: next steps 1 and 2, open since 10 and 11 Nov (the preview was declined in unattended runs).
@@ -395,10 +425,10 @@ Mutation checks: without the filter or without the level penalty, one test each 
 
 ## Next steps (in order)
 
-1. Browser tests for the page (Playwright): the checks above, done by hand twice now.
-2. Small dots for the stops passed on a ride (the path no longer goes through them).
-3. Street walks between a station's entrances in the normal graph too, after comparing the ~40
+1. Small dots for the stops passed on a ride (the path no longer goes through them); now with
+   a browser test.
+2. Street walks between a station's entrances in the normal graph too, after comparing the ~40
    changes it would shorten (side-platform stations) with IDOS.
-4. `serve`: notice a new feed download (fingerprint changed) and reload without a restart.
-5. Step-free changes at Muzeum A <-> C take 8 min, IDOS 3: look for a missing pathway (or an
+3. `serve`: notice a new feed download (fingerprint changed) and reload without a restart.
+4. Step-free changes at Muzeum A <-> C take 8 min, IDOS 3: look for a missing pathway (or an
    in-station lift) before shortening anything.

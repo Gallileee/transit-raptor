@@ -6,3 +6,6 @@ data/
 *.zip
 # The binary feed cache (transit-raptor --cache), written next to a feed by default.
 .transit-raptor-cache/
+# Playwright reports and traces.
+playwright-report/
+test-results/

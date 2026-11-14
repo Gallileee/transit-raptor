@@ -127,7 +127,7 @@ Zličín's few pathways don't reach the metro platform, so the distance estimate
 
 ## Stack
 
-TypeScript 7 on Node 22+, no runtime dependencies. Vitest for tests. TypeScript because a GTFS
+TypeScript 7 on Node 22+, no runtime dependencies. Vitest for tests, Playwright for the page. TypeScript because a GTFS
 feed is a dozen record types whose fields are easy to mix up (a stop *index* vs a stop *id*, a
 time in seconds vs a `HH:MM:SS` string); strict types catch that at compile time.
 
@@ -207,7 +207,11 @@ shows with `textContent`, and only uses a line colour if it is six hex digits.
 ```bash
 npm test             # vitest
 npm run typecheck    # tsc --noEmit, strict
+npm run test:e2e     # builds, then the page in a browser (Playwright)
 ```
+
+`test:e2e` needs a browser: `npx playwright install chromium` once, or an installed Edge or
+Chrome with `PLAYWRIGHT_CHANNEL=msedge` (or `chrome`) set.
 
 The tests run on a hand-made feed (`tests/fixtures/mini`) in which every part exists to test one
 thing: a transfer with a walk between platforms, an express that overtakes a slower bus, a stop
@@ -222,8 +226,18 @@ port and calls it like a browser would (JSON shapes, errors, headers, paths outs
 files). CI runs them on Node 22 and 24, runs the built CLI, and checks its own workflow with
 [workflow-guard](https://github.com/Gallileee/workflow-guard).
 
-The page itself was checked by hand in a browser (desktop and phone width, light and dark): the
-three journeys to the airport, line colours on the map, suggestions for an ambiguous stop.
+`e2e/page.e2e.ts` drives the page in Chromium against the built server on the same test feed:
+a search from the URL and from the form (with stop-name suggestions, and the search kept in
+the URL across a reload), picking a journey by click, keyboard and tap and the map redrawn
+(lines, dashed walks, dots, all inside the visible map), an ambiguous and an unknown stop, the
+step-free checkbox, line colours from the feed, durations that match the times shown, phone
+width and dark mode. It runs without the internet: Leaflet is served from `node_modules`
+(the page's integrity hashes prove it is the cdnjs file), map tiles are a blank image, and any
+other outside request, console error or exception fails the test. CI runs it as its own job
+and keeps the report and traces when it fails.
+
+The real feed was checked by hand in the browser too (see PROGRESS.md, 14 Nov): routes drawn
+along the streets, and step-free journeys compared with IDOS.
 
 ## Limitations
 
@@ -251,7 +265,8 @@ three journeys to the airport, line colours on the map, suggestions for an ambig
 - The web server is meant for one user on their own machine: no authentication, no rate
   limiting, one process. Map tiles come straight from tile.openstreetmap.org, which is fine for
   that but not for a public site (OSM's tile usage policy).
-- The page has no automated browser tests; the API under it does.
+- The browser tests don't cover the map resizing itself when the layout changes (a rotated
+  phone): Leaflet's own resize handling hides a missing `invalidateSize()` in every case tried.
 - Walks are drawn as straight lines; only rides follow the street.
 - Shapes are matched to stops by distance or by nearest segment, not by map matching: a shape
   that wanders more than 150 m from a stop is not used at all (22 trips of a day in PID, where
