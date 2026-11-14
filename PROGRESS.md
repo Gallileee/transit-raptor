@@ -1,5 +1,42 @@
 # Progress log
 
+## 2026-11-14 (interactive): street walks between entrances in the normal graph
+
+Why: next step 1, picked by the user. Since PR #5 the step-free station graph walks along the
+street between a station's entrances (Muzeum A <-> C); the normal graph didn't, pending a
+comparison of the changes it would shorten.
+
+What it changes on PID (normal graph, 16 Nov, old build vs new, every station change):
+- 39 changes. 8 are between tracks 1 and 2 of one metro line (turning back): Černý Most
+  164 -> 105 s, Vyšehrad 128 -> 105 s, Rajská zahrada 89 -> 86 s, and Hlavní nádraží, which
+  had no change between its tracks at all (the feed doesn't join them inside), now 158 s.
+- 31 are platform -> street stop (and back) that now leave by one entrance and walk past
+  another to a stop out of the nearest one's walking range: Flora <-> Orionka (12, -13 s),
+  Muzeum <-> Italská B (-91 s) and I. P. Pavlova C (-5 s), Florenc <-> Pernerova / Bílá labuť,
+  Pankrác <-> Zelená liška B (-64 / -43 s), Želivského, Hlavní nádraží <-> Jindřišská B (new).
+- Not the "~40 side-platform changes" the old note expected: the side-platform stations are
+  the 8 turning-back changes, which journeys hardly use.
+
+Checked:
+- IDOS (Muzeum -> Italská, 16 Nov 08:00) takes tram 11/13, one stop, so it says nothing about
+  the walk. Instead the street parts were checked against OSRM's foot routing on
+  OpenStreetMap: Muzeum E6 -> Italská B 530 m (our path: 208 m to E7 + 356 m); E7 -> Italská B
+  329 m (ours 356 m); Pankrác E3 -> Zelená liška B 354 m. Ours is a little longer: fine.
+- Journeys: 2,000 seeded random queries (stop names, 6-22 h), old vs new build: 1,999
+  identical, 1 changed with the same arrival.
+- That one changed journey showed a bug that was already there: two walks in a row. Fixed
+  separately (next PR).
+
+Done:
+- `stations.ts`: street walks between entrances in both graphs; entrances marked not
+  step-free only left out of the step-free one. `street` marks computed for both.
+- `timetable.ts`: the normal timetable keeps the mark too.
+- Tests: 1 (a copy of the test feed without Gamma's escalators and stairs: the normal change
+  goes out via the north exit, shorter than the step-free one). 173 unit tests, 18 browser.
+- Mutations, each caught: street walks for step-free only, the north exit left out of the
+  normal graph (first missed; the test now removes the stairs too), the normal timetable not
+  keeping the mark.
+
 ## 2026-11-14 (interactive): a notice for journeys outside the timetable
 
 Why: next step 3, picked by the user. After feed_end_date (22 Nov) PID's feed still has its
@@ -598,9 +635,9 @@ Mutation checks: without the filter or without the level penalty, one test each 
 
 ## Next steps (in order)
 
-1. Street walks between a station's entrances in the normal graph too, after comparing the ~40
-   changes it would shorten (side-platform stations) with IDOS.
-2. Stops without a time in the feed (not timepoints) show the time they were filled in with;
-   interpolating by distance would be closer.
-3. Hlavní nádraží (C) and Černý Most (B): check whether the two tracks share an island platform
-   the feed doesn't join (the step-free change between them goes out to the street).
+1. RAPTOR's walk step can chain two walks (one walk improves a stop another walk of the same
+   round already started from); seen in 1 of 2,000 random PID journeys.
+2. Hlavní nádraží (C) and Černý Most (B): check whether the two tracks share an island platform
+   the feed doesn't join (the change between them goes out to the street).
+3. Stops without a time in the feed: interpolate by distance (PID has none, so only for other
+   feeds).

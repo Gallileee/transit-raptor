@@ -14,7 +14,7 @@
  *   Without stairs and escalators, the only way from M1 to M2 is up at GE4, along the street,
  *   and down at GE3. GE2 is closer to GE3, but marked as not step-free.
  */
-import { appendFileSync, cpSync, mkdtempSync, rmSync } from "node:fs";
+import { appendFileSync, cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -98,6 +98,30 @@ describe("step-free changes inside stations", () => {
     expect(change(true, "M1", "S")?.street).toBeUndefined(); // leaving the station anyway
     const tt = buildTimetable(feed, { stepFree: true });
     expect([viaStreet(tt, id("M1"), id("M2")), viaStreet(buildTimetable(feed), id("M1"), id("M2"))]).toEqual([true, false]);
+  });
+
+  it("walks between entrances in the normal graph too, through any entrance", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "transit-raptor-street-"));
+    try {
+      cpSync(MINI, dir, { recursive: true });
+      // Without Gamma's escalators (and the stairs to its main exit), the way between M1 and M2
+      // leaves the station: by a lift, along the street, down the east lift.
+      const pathways = readFileSync(join(MINI, "pathways.txt"), "utf8").split("\n");
+      writeFileSync(join(dir, "pathways.txt"), pathways.filter((l) => !/^(E[12]|S1),/.test(l)).join("\n"));
+      const feed = await loadFeed(dir, parseDate("2026-11-10"));
+      const [m1, m2] = [feed.stopById.get("M1")!, feed.stopById.get("M2")!];
+      const change = (stepFree: boolean) =>
+        stationTransfers(feed, DEFAULT_WALK, DEFAULT_STATION, stepFree).find((t) => t.from === m1 && t.to === m2);
+      const [normal, stepFree] = [change(false), change(true)];
+      expect(normal?.street).toBe(true);
+      expect(stepFree?.street).toBe(true);
+      // The north exit (GE2), marked not step-free but nearer the east lift, makes the normal one
+      // shorter than the step-free one, which has to take the west lift.
+      expect(normal!.seconds).toBeLessThan(stepFree!.seconds);
+      expect(viaStreet(buildTimetable(feed), m1, m2)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("doesn't mark a change that a lift inside the station makes quicker", async () => {
