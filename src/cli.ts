@@ -2,7 +2,7 @@
  * transit-raptor plan  --gtfs DIR --from NAME --to NAME [--date YYYY-MM-DD] [--time HH:MM]
  *                      [--max-transfers N] [--window MIN] [--list] [--step-free]
  * transit-raptor stops --gtfs DIR --search TEXT
- * transit-raptor serve --gtfs DIR [--port 8080] [--host 127.0.0.1]
+ * transit-raptor serve --gtfs DIR [--port 8080] [--host 127.0.0.1] [--reload MIN]
  * Every command also takes [--cache DIR | --no-cache].
  *
  * Exit codes: 0 = journeys found (or stops listed), 1 = no journey, 2 = bad input or feed.
@@ -22,7 +22,7 @@ const USAGE = `Usage:
   transit-raptor plan  --gtfs DIR --from NAME --to NAME [--date YYYY-MM-DD] [--time HH:MM]
                        [--max-transfers N] [--window MIN] [--list] [--step-free]
   transit-raptor stops --gtfs DIR --search TEXT
-  transit-raptor serve --gtfs DIR [--port 8080] [--host 127.0.0.1]
+  transit-raptor serve --gtfs DIR [--port 8080] [--host 127.0.0.1] [--reload MIN]
 
 DIR is an unzipped GTFS feed (e.g. data/pid after npm run fetch-pid).
 Date and time default to now (local time).
@@ -33,7 +33,9 @@ escalators); stops and vehicles the feed says nothing about are allowed.
 serve runs the web page with a map and its JSON API (/api/plan, /api/stops).
 The feed is read once into a binary cache (DIR/.transit-raptor-cache, or --cache DIR) that
 later runs load in a fraction of the time; it is rebuilt when a feed file changes.
---no-cache reads the CSV files every time and writes nothing.`;
+--no-cache reads the CSV files every time and writes nothing.
+serve looks for a new download of the feed every --reload minutes (default 5, 0 = never) and
+switches to it without a restart once its files stop changing.`;
 
 class UsageError extends Error {}
 
@@ -79,6 +81,7 @@ async function run(argv: string[], io: Io): Promise<number> {
         host: { type: "string", default: "127.0.0.1" },
         cache: { type: "string" },
         "no-cache": { type: "boolean", default: false },
+        reload: { type: "string", default: "5" },
       },
       strict: true,
     });
@@ -92,7 +95,7 @@ async function run(argv: string[], io: Io): Promise<number> {
   if (!values.gtfs) throw new UsageError("--gtfs is required");
   if (values.cache !== undefined && values["no-cache"]) throw new UsageError("--cache and --no-cache don't go together");
   const cacheDir = values["no-cache"] ? undefined : (values.cache ?? defaultCacheDir(values.gtfs));
-  if (command === "serve") return serve(values.gtfs, values.port, values.host, cacheDir, io);
+  if (command === "serve") return serve(values.gtfs, values.port, values.host, values.reload, cacheDir, io);
 
   const now = io.now();
   const date: ServiceDate = values.date
@@ -150,11 +153,16 @@ async function serve(
   gtfs: string,
   portText: string,
   host: string,
+  reloadText: string,
   cacheDir: string | undefined,
   io: Io,
 ): Promise<number> {
   const port = Number(portText);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new UsageError("--port must be from 1 to 65535");
+  const reload = Number(reloadText);
+  if (!/^\d+$/.test(reloadText) || reload > 24 * 60) {
+    throw new UsageError("--reload must be a whole number of minutes from 0 (never) to 1440");
+  }
   const planner = new Planner(gtfs, io.now, 2, io.err, cacheDir);
   const started = performance.now();
   await planner.load(planner.today()); // fail early on a bad feed, and make the first request fast (shapes too)
@@ -165,6 +173,12 @@ async function serve(
     server.listen(port, host, () => resolveListen());
   });
   io.out(`transit-raptor: http://${host}:${port}/`);
+  if (reload > 0) {
+    const timer = setInterval(() => void planner.checkForNewFeed(), reload * 60_000);
+    timer.unref(); // the server keeps the process alive, not the timer
+    server.once("close", () => clearInterval(timer));
+    io.err(`Looking for a new feed in ${gtfs} every ${reload} min`);
+  }
   return 0;
 }
 

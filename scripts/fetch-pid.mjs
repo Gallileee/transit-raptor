@@ -8,13 +8,18 @@
 // GNU tar (Linux, Git Bash) can't read zip files and takes "C:" for a remote host, so it comes
 // second and failed attempts stay quiet unless every one fails.
 import { spawnSync } from "node:child_process";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const URL = "https://data.pid.cz/PID_GTFS.zip";
 const dataDir = join(import.meta.dirname, "..", "data");
 const zip = join(dataDir, "PID_GTFS.zip");
 const target = join(dataDir, "pid");
+// Extracted next to the target first and then swapped in, so a running `serve` never sees a
+// half-extracted feed (it also waits for the files to stop changing). The cache folder in the
+// old feed is moved over: its fingerprint no longer matches, so it is just rewritten.
+const fresh = join(dataDir, "pid.new");
+const CACHE = ".transit-raptor-cache";
 
 mkdirSync(dataDir, { recursive: true });
 console.log(`Downloading ${URL} ...`);
@@ -27,16 +32,23 @@ const bytes = Buffer.from(await response.arrayBuffer());
 writeFileSync(zip, bytes);
 console.log(`Saved ${(bytes.length / 1e6).toFixed(1)} MB to ${zip}`);
 
-rmSync(target, { recursive: true, force: true });
-mkdirSync(target, { recursive: true });
+rmSync(fresh, { recursive: true, force: true });
+mkdirSync(fresh, { recursive: true });
 const attempts = [
-  ["unzip", ["-q", "-o", zip, "-d", target]],
-  ["tar", ["-xf", zip, "-C", target]],
+  ["unzip", ["-q", "-o", zip, "-d", fresh]],
+  ["tar", ["-xf", zip, "-C", fresh]],
 ];
 const errors = [];
 for (const [command, args] of attempts) {
   const result = spawnSync(command, args, { encoding: "utf8" });
   if (result.status === 0) {
+    try {
+      renameSync(join(target, CACHE), join(fresh, CACHE));
+    } catch {
+      // no cache yet
+    }
+    rmSync(target, { recursive: true, force: true });
+    renameSync(fresh, target);
     console.log(`Extracted to ${target} with ${command}`);
     process.exit(0);
   }
