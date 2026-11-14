@@ -32,8 +32,8 @@ test("plans the journey in the URL, lists it and draws the first one", async ({ 
   await expect(viaBravo.getByRole("heading")).toHaveText("08:00 → 08:1515 min · 1 change");
   await expect(viaBravo.locator(".badge.walk")).toHaveText("walk");
   await expect(direct).toHaveAttribute("aria-selected", "true");
-  // One ride: its line, a dot where it starts, a dot at the end.
-  await expect(drawn(page)).toHaveCount(3);
+  // One ride: its line, a dot for the stop on the way (Charlie), a dot where it starts and one at the end.
+  await expect(drawn(page)).toHaveCount(4);
   await expectJourneyInsideMap(page);
 });
 
@@ -50,7 +50,34 @@ test("selects another journey by click and by keyboard, and redraws the map", as
   await journeys(page).nth(0).focus();
   await page.keyboard.press("Enter");
   await expect(journeys(page).nth(0)).toHaveAttribute("aria-selected", "true");
-  await expect(drawn(page)).toHaveCount(3);
+  await expect(drawn(page)).toHaveCount(4);
+});
+
+test("shows the stops on the way as dots in the line's colour, and as a list", async ({ page }) => {
+  await page.goto(searchUrl({ from: "alpha", to: "echo", time: "08:55", ...TUESDAY }));
+  await expect(journeys(page).first()).toBeVisible();
+  // Metro 11 Alpha -> Gamma has no stop on the way.
+  await expect(page.locator(".leaflet-overlay-pane path.passed-stop")).toHaveCount(0);
+
+  await page.goto(searchUrl({ from: "alpha", to: "delta", time: "08:00", ...TUESDAY }));
+  const dots = page.locator(".leaflet-overlay-pane path.passed-stop");
+  await expect(dots).toHaveCount(1);
+  await expect(dots).toHaveAttribute("stroke", "#0b5cad"); // bus 300 has no route_color: the default
+  await expectJourneyInsideMap(page);
+  await dots.hover({ force: true });
+  await expect(page.locator(".leaflet-tooltip")).toHaveText("08:18 Charlie");
+
+  const list = journeys(page).first().locator("details.passed");
+  await expect(list.locator("summary")).toHaveText("1 stop in between");
+  await expect(list.locator("li")).toBeHidden();
+  await list.locator("summary").click();
+  await expect(list.locator("li")).toHaveText(["08:18Charlie"]);
+  // Opening the list with the keyboard doesn't select another journey.
+  await expect(journeys(page).nth(1).locator("details.passed")).toHaveCount(0); // its rides make no stop on the way
+  await list.locator("summary").focus();
+  await page.keyboard.press("Enter");
+  await expect(list.locator("li")).toBeHidden();
+  await expect(journeys(page).first()).toHaveAttribute("aria-selected", "true");
 });
 
 test("searches from the form, suggests stop names, and keeps the search in the URL", async ({ page }) => {

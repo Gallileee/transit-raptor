@@ -188,6 +188,7 @@ function journeyItem(journey, index) {
       if (stepFree && leg.access === "unknown") text.append(el("span", "unconfirmed", " · step-free access not confirmed"));
       if (leg.access === "yes") badge.title += " · step-free";
       row.append(text);
+      if (leg.passed.length > 0) row.append(passedList(leg.passed));
     }
     legs.append(row);
   }
@@ -201,6 +202,22 @@ function journeyItem(journey, index) {
     }
   });
   return item;
+}
+
+/** "3 stops in between", opened to list them with their times. */
+function passedList(passed) {
+  const details = el("details", "passed");
+  details.append(el("summary", "", `${passed.length} stop${passed.length > 1 ? "s" : ""} in between`));
+  const list = el("ol");
+  for (const stop of passed) {
+    const item = el("li");
+    item.append(el("span", "time", stop.arrival), el("span", "", stopName(stop)));
+    list.append(item);
+  }
+  details.append(list);
+  // Opening the list shouldn't count as a key press on the journey (Enter/Space selects it).
+  details.addEventListener("keydown", (event) => event.stopPropagation());
+  return details;
 }
 
 function select(index) {
@@ -219,6 +236,19 @@ function draw(journey) {
     line.bindTooltip(leg.kind === "walk" ? `walk ${leg.minutes} min` : `${leg.mode} ${leg.line}`);
     line.addTo(drawn);
     bounds.push(...leg.path);
+    // Small dots in the line's colour where the vehicle stops on the way.
+    for (const stop of leg.kind === "ride" ? leg.passed : []) {
+      L.circleMarker([stop.lat, stop.lon], {
+        radius: 3.5,
+        color: color(leg.color) ?? "#0b5cad",
+        weight: 2,
+        fillColor: "#fff",
+        fillOpacity: 1,
+        className: "passed-stop",
+      })
+        .bindTooltip(`${stop.arrival} ${stopName(stop)}`)
+        .addTo(drawn);
+    }
     // A dot where each leg starts, a bigger one at the end of the journey. They sit on the
     // stops themselves: a line drawn along the street may start a few metres beside the stop.
     L.circleMarker([leg.from.lat, leg.from.lon], { radius: i === 0 ? 7 : 5, color: "#1c2430", weight: 2, fillColor: "#fff", fillOpacity: 1 })

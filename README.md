@@ -89,6 +89,10 @@ It is a learning project: [OpenTripPlanner](https://www.opentripplanner.org/) an
    straight between its stops, and the API says which drawing it got (`shape: true/false`).
    Shapes don't depend on the date, so they are read once, in parallel with the first day's
    timetable, into typed arrays (micro-degree integers, 32-bit distances): 43 MB.
+   Since the line no longer bends through every stop, the stops a ride makes on the way are
+   listed too (`passed`, with arrival times): small dots in the line's colour on the map, and
+   "5 stops in between" under the ride, which opens to the list. Stops the vehicle only drives
+   past (no pickup and no drop-off in `stop_times.txt`) are left out.
 8. **Stop names** (`stops.ts`). "andel" finds every platform called "Anděl": names are compared
    without case, diacritics or punctuation; a unique prefix also works.
 
