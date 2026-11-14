@@ -181,6 +181,11 @@ export interface StationTransfer {
   readonly from: number;
   readonly to: number;
   readonly seconds: number;
+  /**
+   * A change between two platforms that leaves the station and comes back in through another
+   * entrance, because no way inside is as quick (step-free at Muzeum: no lift links A and C).
+   */
+  readonly street?: true;
 }
 
 /**
@@ -216,6 +221,9 @@ export function stationTransfers(
     return metres <= walk.maxMetres ? (metres * walk.detour) / walk.speed : undefined;
   };
   const { forward, backward } = buildGraphs(feed, options, stepFree, surface, entrances);
+  // Only the step-free graph has street walks between entrances; without them, what's left is
+  // the way inside, to tell which changes go out to the street.
+  const inside = stepFree ? buildGraphs(feed, options, stepFree, () => undefined, entrances).forward : undefined;
 
   const result: StationTransfer[] = [];
   const byStation = new Map<string, number[]>();
@@ -232,14 +240,18 @@ export function stationTransfers(
     for (const from of platforms) {
       const starts = areas.get(from)!;
       const fromStarts = starts.map((a) => dijkstra(forward, a));
-      const average = (cost: (dist: Map<number, number>) => number): number =>
-        fromStarts.reduce((sum, dist) => sum + cost(dist), 0) / fromStarts.length;
+      const average = (cost: (dist: Map<number, number>) => number, dists = fromStarts): number =>
+        dists.reduce((sum, dist) => sum + cost(dist), 0) / dists.length;
+      const insideStarts = inside && starts.map((a) => dijkstra(inside, a));
 
       for (const to of platforms) {
         if (to === from) continue;
         const targets = areas.get(to)!;
-        const seconds = average((dist) => Math.min(...targets.map((t) => dist.get(t) ?? Infinity)));
-        if (Number.isFinite(seconds)) result.push({ from, to, seconds: Math.ceil(seconds + options.bufferSeconds) });
+        const nearest = (dist: Map<number, number>) => Math.min(...targets.map((t) => dist.get(t) ?? Infinity));
+        const seconds = average(nearest);
+        if (!Number.isFinite(seconds)) continue;
+        const change = { from, to, seconds: Math.ceil(seconds + options.bufferSeconds) };
+        result.push(insideStarts && average(nearest, insideStarts) > seconds ? { ...change, street: true } : change);
       }
       for (const stop of nearby) {
         const seconds = average((dist) =>

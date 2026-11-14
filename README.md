@@ -76,8 +76,9 @@ It is a learning project: [OpenTripPlanner](https://www.opentripplanner.org/) an
    station's, as the GTFS reference says); and changes inside stations use the station graph
    without stairs and escalators, or entrances marked as not step-free. Where the only
    step-free way is out to the street and back (Muzeum A ↔ C has a lift from each platform to
-   the street, nothing inside), the graph walks along the street between the station's
-   entrances. Stops and trips the feed says nothing about are allowed, and the page says on
+   the street, nothing inside, as DPP's own station page says), the graph walks along the
+   street between the station's entrances, and the journey says so: "change platforms at
+   Muzeum, out via the street" (`street: true` on the walk in the API). Stops and trips the feed says nothing about are allowed, and the page says on
    which rides access isn't confirmed (most street stops in PID).
 7. **Drawing rides along the street** (`shapes.ts`). `shapes.txt` gives every trip's line on
    the map (Prague: 7,572 shapes, 3.3 M points). The part between where one gets on and off is
@@ -273,7 +274,9 @@ along the streets, and step-free journeys compared with IDOS.
   stops as unknown), `transfers.txt` times are used as they are, and walks between stops
   outside the stations with pathways assume the street is passable. Compared with IDOS's
   barrier-free search on 16 Nov: same journey Hlavní nádraží -> Palmovka; at Muzeum A -> C it
-  allows 8 min for the change (via the street) where IDOS allows about 3.
+  allows 8 min for the change where IDOS allows about 3. The 8 min hold up (see PROGRESS.md,
+  14 Nov): the two lifts alone take 200 s in the feed, and the street between them is 201 m on
+  OpenStreetMap's footpaths (208 m here).
 - Footpaths aren't chained (one walk between two vehicles), as in the paper.
 - No real-time delays, fares, or daylight-saving corrections (GTFS times are
   measured from "noon minus 12 h", which differs from midnight on the two DST days).

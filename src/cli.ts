@@ -145,7 +145,7 @@ async function run(argv: string[], io: Io): Promise<number> {
     return 1;
   }
   io.out(`${from.name} -> ${to.name}, ${formatDate(date)}`);
-  for (const journey of journeys) io.out(`\n${formatJourney(feed, journey)}`);
+  for (const journey of journeys) io.out(`\n${formatJourney(feed, journey, timetable)}`);
   return 0;
 }
 
