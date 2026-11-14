@@ -26,6 +26,15 @@ export function parseClock(text: string): number {
   return Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3] ?? 0);
 }
 
+/**
+ * Whole minutes from one time to another as the clock shows them: 08:01:50 -> 08:12:10 is
+ * 11 minutes, because they read "08:01" and "08:12". Rounding the seconds (10.3 -> 10) would
+ * contradict the two times printed next to it.
+ */
+export function minutesBetween(from: number, to: number): number {
+  return Math.floor(to / 60) - Math.floor(from / 60);
+}
+
 /** Seconds -> "08:05", with "+1" for the next day (and "-1" for the previous one). */
 export function formatClock(seconds: number): string {
   const days = Math.floor(seconds / DAY);
