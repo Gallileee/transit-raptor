@@ -8,7 +8,7 @@ import { type Journey, type Leg, plan, profile } from "./raptor.js";
 import { cut, type LatLon, type Shapes } from "./shapes.js";
 import { StopIndex, type StopMatch } from "./stops.js";
 import { formatClock, formatDate, minutesBetween, parseClock, parseDate, type ServiceDate } from "./time.js";
-import { buildTimetable, type Timetable } from "./timetable.js";
+import { buildTimetable, type Timetable, viaStreet } from "./timetable.js";
 
 /** Something the caller got wrong (an unknown stop, a malformed time): HTTP 400, not 500. */
 export class RequestError extends Error {
@@ -116,7 +116,20 @@ export type LegJson =
        */
       passed: PassedStop[];
     }
-  | { kind: "walk"; from: StopJson; to: StopJson; departure: string; arrival: string; minutes: number; path: [number, number][] };
+  | {
+      kind: "walk";
+      from: StopJson;
+      to: StopJson;
+      departure: string;
+      arrival: string;
+      minutes: number;
+      path: [number, number][];
+      /**
+       * A change inside a station that goes out to the street and back in through another
+       * entrance: in a step-free search at Muzeum, the lifts from A and from C only reach the street.
+       */
+      street: boolean;
+    };
 
 export interface JourneyJson {
   departure: string;
@@ -314,7 +327,7 @@ export class Planner {
       date: formatDate(date),
       time: formatClock(departAt),
       stepFree,
-      journeys: journeys.map((j) => journeyJson(loaded, j)),
+      journeys: journeys.map((j) => journeyJson(loaded, j, timetable)),
       feed: loaded.info,
     };
   }
@@ -338,17 +351,17 @@ function point(feed: Feed, index: number): LatLon {
   return [s.lat, s.lon];
 }
 
-export function journeyJson(loaded: Loaded, journey: Journey): JourneyJson {
+export function journeyJson(loaded: Loaded, journey: Journey, timetable: Timetable = loaded.timetable): JourneyJson {
   return {
     departure: formatClock(journey.departure),
     arrival: formatClock(journey.arrival),
     minutes: minutesBetween(journey.departure, journey.arrival),
     transfers: journey.transfers,
-    legs: journey.legs.map((leg) => legJson(loaded, leg)),
+    legs: journey.legs.map((leg) => legJson(loaded, leg, timetable)),
   };
 }
 
-function legJson({ feed, tripById, shapes }: Loaded, leg: Leg): LegJson {
+function legJson({ feed, tripById, shapes }: Loaded, leg: Leg, timetable: Timetable): LegJson {
   const times = { departure: formatClock(leg.departure), arrival: formatClock(leg.arrival) };
   if (leg.kind === "walk") {
     return {
@@ -358,6 +371,7 @@ function legJson({ feed, tripById, shapes }: Loaded, leg: Leg): LegJson {
       ...times,
       minutes: Math.max(1, minutesBetween(leg.departure, leg.arrival)),
       path: [point(feed, leg.from), point(feed, leg.to)],
+      street: viaStreet(timetable, leg.from, leg.to),
     };
   }
   const route = feed.routes.get(leg.routeId);

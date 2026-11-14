@@ -144,6 +144,14 @@ test("the step-free checkbox changes the journeys and is kept in the URL", async
   await expect(status(page)).toContainText("1 step-free journey");
 });
 
+test("says when a step-free change goes out to the street and back in", async ({ page }) => {
+  const search = { from: "alpha", to: "echo", time: "08:55", ...TUESDAY };
+  await page.goto(searchUrl({ ...search, stepFree: "1" }));
+  await expect(journeys(page).first().locator(".leg").nth(1)).toHaveText(/^09:10walk7 min: change platforms at Gamma, out via the street$/);
+  await page.goto(searchUrl(search));
+  await expect(journeys(page).first().locator(".leg").nth(1)).toHaveText(/^\d\d:\d\dwalk\d+ min: change platforms at Gamma$/);
+});
+
 test("says when there is no step-free journey", async ({ page }) => {
   await page.goto(searchUrl({ from: "charlie", to: "foxtrot north", time: "08:15", stepFree: "1", ...TUESDAY }));
   await expect(status(page)).toHaveText("No step-free journey from Charlie to Foxtrot North.");

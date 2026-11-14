@@ -1,5 +1,50 @@
 # Progress log
 
+## 2026-11-14 (interactive): the step-free change at Muzeum A <-> C
+
+Why: next step 1, picked by the user. A step-free change at Muzeum took 8 minutes here and
+"about 3" in IDOS's barrier-free search; the note said to look for a missing pathway (or a lift
+inside the station) before shortening anything.
+
+What the feed says (pathways.txt, stops U400*): A is at level -5, C at -3. Inside, they are
+joined only by the transfer corridor's escalators (U400N15/N17 -> N19 -> N20). The only lifts
+are E7 (A platform -> Vinohradská, 120 s) and E6 (C platform -> the park by Washingtonova,
+80 s). No pathway is missing.
+
+What DPP says (dpp.cz, "Bezbariérové cestování", Muzeum A/C): the line A lifts don't give
+access to line C, nor the line C lift to line A; changing step-free is only possible over the
+surface ("pouze povrchovou cestou").
+
+Our 8 minutes, from the station graph (U400K01B3 -> C): 26 s along the A platform to the lift,
+120 s lift, 174 s street (160 m straight x 1.3 detour at 1.2 m/s = 208 m), 80 s lift, 16-46 s
+along C, then the 45 s buffer: 461-477 s. OSRM's foot routing on OpenStreetMap between the
+two lift entrances: 201 m, 161 s. So the 8 minutes are right, and IDOS's 3 minutes can't be
+done (the two lifts alone are 200 s). Nothing was shortened.
+
+Done instead: say it. A step-free change between two platforms that has to go out to the street
+(no way inside as quick) is marked:
+- `stations.ts`: `StationTransfer.street`, from a second Dijkstra on the step-free graph without
+  the street walks.
+- `timetable.ts`: `Footpath.street`, `viaStreet(tt, from, to)`; a transfers.txt time for the
+  pair removes the mark (its way is unknown).
+- API: walk legs have `street`; the page and the CLI say "change platforms at Muzeum, out via
+  the street".
+- Tests: 4 unit tests (Gamma in the test feed is built like Muzeum; a copy with a lift inside,
+  and one with a transfers.txt entry), the API and the CLI, and a browser test. 168 unit tests,
+  16 browser tests.
+
+Verified:
+- Mutations, each caught: every step-free platform change marked, none marked, the mark kept
+  under a transfers.txt time, not passed on to footpaths, the API using the step-free timetable
+  for a normal search, the plan answer using the normal timetable, the CLI and the page not
+  showing it.
+- Real feed: `plan --step-free` Můstek -> I. P. Pavlova 16 Nov 08:00: "08:02-08:10 walk 8 min:
+  change platforms at Muzeum, out via the street"; the page shows the same.
+- On PID, 14 changes are marked: Muzeum (8), and 1 <-> 2 at Hlavní nádraží (C), Rajská zahrada
+  and Černý Most (B), where the feed gives each track its own lift and no way between the two
+  tracks. Rajská zahrada has side platforms; whether Hlavní nádraží's and Černý Most's are
+  islands the feed leaves out was not checked. Those changes only turn back the way one came.
+
 ## 2026-11-14 (interactive): which timetable is in use, on the page
 
 Why: next step 4, picked by the user. Since the server swaps in new feeds by itself, nothing
@@ -523,11 +568,11 @@ Mutation checks: without the filter or without the level penalty, one test each 
 
 ## Next steps (in order)
 
-1. Step-free changes at Muzeum A <-> C take 8 min, IDOS 3: look for a missing pathway (or an
-   in-station lift) before shortening anything.
-2. Street walks between a station's entrances in the normal graph too, after comparing the ~40
+1. Street walks between a station's entrances in the normal graph too, after comparing the ~40
    changes it would shorten (side-platform stations) with IDOS.
-3. Stops without a time in the feed (not timepoints) show the time they were filled in with;
+2. Stops without a time in the feed (not timepoints) show the time they were filled in with;
    interpolating by distance would be closer.
-4. A search after feed_end_date can still find trains (their services run all year): say that
+3. A search after feed_end_date can still find trains (their services run all year): say that
    only some lines are in the timetable for that date.
+4. Hlavní nádraží (C) and Černý Most (B): check whether the two tracks share an island platform
+   the feed doesn't join (the step-free change between them goes out to the street).

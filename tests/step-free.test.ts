@@ -14,6 +14,8 @@
  *   Without stairs and escalators, the only way from M1 to M2 is up at GE4, along the street,
  *   and down at GE3. GE2 is closer to GE3, but marked as not step-free.
  */
+import { appendFileSync, cpSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { main } from "../src/cli.js";
@@ -24,7 +26,7 @@ import { combinedAccess, Planner } from "../src/service.js";
 import { DEFAULT_STATION, isStepFree, stationTransfers } from "../src/stations.js";
 import { StopIndex } from "../src/stops.js";
 import { parseClock, parseDate } from "../src/time.js";
-import { buildTimetable, DEFAULT_WALK } from "../src/timetable.js";
+import { buildTimetable, DEFAULT_WALK, viaStreet } from "../src/timetable.js";
 
 const MINI = join(import.meta.dirname, "fixtures", "mini");
 const BUFFER = DEFAULT_STATION.bufferSeconds;
@@ -84,6 +86,49 @@ describe("step-free changes inside stations", () => {
     // Back: from M2B into the east lift, from M2A 20 s more; then the street and the west lift
     // to M1B, the nearest boarding area of M1.
     expect(change(true, "M2", "M1")).toBe(Math.ceil((20 + 120 + 120 + (120 + 120)) / 2 + outside + BUFFER));
+  });
+
+  it("marks a change that has to go out to the street, and only that one", async () => {
+    const { feed, id } = await setup();
+    const change = (stepFree: boolean, from: string, to: string) =>
+      stationTransfers(feed, DEFAULT_WALK, DEFAULT_STATION, stepFree).find((t) => t.from === id(from) && t.to === id(to));
+    expect(change(true, "M1", "M2")?.street).toBe(true);
+    expect(change(true, "M2", "M1")?.street).toBe(true);
+    expect(change(false, "M1", "M2")?.street).toBeUndefined(); // the escalator
+    expect(change(true, "M1", "S")?.street).toBeUndefined(); // leaving the station anyway
+    const tt = buildTimetable(feed, { stepFree: true });
+    expect([viaStreet(tt, id("M1"), id("M2")), viaStreet(buildTimetable(feed), id("M1"), id("M2"))]).toEqual([true, false]);
+  });
+
+  it("doesn't mark a change that a lift inside the station makes quicker", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "transit-raptor-street-"));
+    try {
+      cpSync(MINI, dir, { recursive: true });
+      appendFileSync(join(dir, "pathways.txt"), "EL4,N1,M2A,5,1,60,\n"); // a lift beside the escalators
+      const feed = await loadFeed(dir, parseDate("2026-11-10"));
+      const [m1, m2] = [feed.stopById.get("M1")!, feed.stopById.get("M2")!];
+      const change = stationTransfers(feed, DEFAULT_WALK, DEFAULT_STATION, true).find((t) => t.from === m1 && t.to === m2);
+      // From M1A 30 s to N1, from M1B 50 s; then the lift (60): inside, much quicker than the street.
+      expect(change).toEqual({ from: m1, to: m2, seconds: Math.ceil((30 + 50) / 2 + 60 + BUFFER) });
+      expect(viaStreet(buildTimetable(feed, { stepFree: true }), m1, m2)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("doesn't mark it when transfers.txt gives the change its own time", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "transit-raptor-street-"));
+    try {
+      cpSync(MINI, dir, { recursive: true });
+      appendFileSync(join(dir, "transfers.txt"), "M1,M2,2,300\n");
+      const feed = await loadFeed(dir, parseDate("2026-11-10"));
+      const [m1, m2] = [feed.stopById.get("M1")!, feed.stopById.get("M2")!];
+      const tt = buildTimetable(feed, { stepFree: true });
+      expect(tt.footpaths[m1]!.find((f) => f.to === m2)).toEqual({ to: m2, seconds: 300 });
+      expect(viaStreet(tt, m2, m1)).toBe(true); // the other way still goes out
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("goes out to the street by a lift, not by the exit marked as not step-free", async () => {
@@ -168,6 +213,16 @@ describe("step-free in the API and the CLI", () => {
     ]);
   });
 
+  it("says when a step-free change goes out to the street", async () => {
+    const request = { from: "alpha", to: "echo", date: "2026-11-10", time: "08:55", window: 0 };
+    const walks = async (stepFree: boolean) =>
+      (await planner.plan({ ...request, stepFree })).journeys[0]!.legs.flatMap((l) =>
+        l.kind === "walk" ? [[l.from.name, l.to.name, l.street]] : [],
+      );
+    expect(await walks(true)).toEqual([["Gamma", "Gamma", true]]);
+    expect(await walks(false)).toEqual([["Gamma", "Gamma", false]]);
+  });
+
   it("builds the step-free timetable once per date, and only when asked", async () => {
     const loaded = await planner.load({ year: 2026, month: 11, day: 10 });
     const first = loaded.stepFreeTimetable();
@@ -184,5 +239,14 @@ describe("step-free in the API and the CLI", () => {
     out.length = 0;
     expect(await main([...args, "--step-free"], io)).toBe(1);
     expect(out).toEqual(["No step-free journey from Charlie to Foxtrot North with at most 4 transfers."]);
+
+    out.length = 0;
+    const gamma = ["plan", "--gtfs", MINI, "--from", "alpha", "--to", "echo", "--time", "08:55", "--window", "0", "--no-cache"];
+    expect(await main([...gamma, "--step-free"], io)).toBe(0);
+    const walks = () => out.flatMap((block) => block.split("\n")).filter((l) => l.includes(" walk "));
+    expect(walks()).toEqual(["  09:10–09:17  walk 7 min: change platforms at Gamma, out via the street"]);
+    out.length = 0;
+    expect(await main(gamma, io)).toBe(0);
+    expect(walks()).toEqual([expect.stringMatching(/walk \d+ min: change platforms at Gamma$/)]);
   });
 });

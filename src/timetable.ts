@@ -32,6 +32,8 @@ export interface Pattern {
 export interface Footpath {
   readonly to: number;
   readonly seconds: number;
+  /** A change inside a station that goes out to the street and back in (see stations.ts). */
+  readonly street?: true;
 }
 
 export interface WalkOptions {
@@ -83,6 +85,11 @@ export interface Timetable {
   readonly stopPatterns: { pattern: number; position: number }[][];
   /** For each stop: where one can walk to, and how long it takes. */
   readonly footpaths: Footpath[][];
+}
+
+/** Whether the walk from `from` to `to` goes out to the street and back into the station. */
+export function viaStreet(tt: Timetable, from: number, to: number): boolean {
+  return tt.footpaths[from]!.some((f) => f.to === to && f.street === true);
 }
 
 export function arrival(p: Pattern, trip: number, position: number): number {
@@ -167,6 +174,7 @@ export { distanceMetres } from "./geo.js";
  */
 function buildFootpaths(feed: Feed, walk: WalkOptions, station: StationOptions, stepFree: boolean): Footpath[][] {
   const best = feed.stops.map(() => new Map<number, number>());
+  const street = feed.stops.map(() => new Set<number>());
   const usable = feed.stops.filter((s) => s.locationType === 0 && Number.isFinite(s.lat) && Number.isFinite(s.lon));
 
   const cellDegrees = walk.maxMetres / METRES_PER_DEGREE;
@@ -209,18 +217,26 @@ function buildFootpaths(feed: Feed, walk: WalkOptions, station: StationOptions, 
     // Where the station graph connects two stops only with stairs or escalators, there is no
     // step-free change, and the estimate from distance must not offer one either.
     for (const t of inside) best[t.from]!.delete(t.to);
-    for (const t of stationTransfers(feed, walk, station, true)) best[t.from]!.set(t.to, t.seconds);
+    for (const t of stationTransfers(feed, walk, station, true)) {
+      best[t.from]!.set(t.to, t.seconds);
+      if (t.street) street[t.from]!.add(t.to);
+    }
   } else {
     for (const t of inside) best[t.from]!.set(t.to, t.seconds);
   }
   for (const t of feed.transfers) {
-    if (t.from !== t.to) best[t.from]!.set(t.to, t.seconds);
+    if (t.from === t.to) continue;
+    best[t.from]!.set(t.to, t.seconds);
+    street[t.from]!.delete(t.to); // the feed's time is for its own way, which we don't know
   }
   // A stop with no step-free access can't be walked to or from either.
   const reachable = (stop: number) => !stepFree || feed.stops[stop]!.wheelchair !== 2;
   return best.map((m, from) =>
     reachable(from)
-      ? [...m].filter(([to]) => reachable(to)).map(([to, seconds]) => ({ to, seconds })).sort((a, b) => a.seconds - b.seconds)
+      ? [...m]
+          .filter(([to]) => reachable(to))
+          .map(([to, seconds]): Footpath => (street[from]!.has(to) ? { to, seconds, street: true } : { to, seconds }))
+          .sort((a, b) => a.seconds - b.seconds)
       : [],
   );
 }
