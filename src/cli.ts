@@ -14,6 +14,7 @@ import { defaultCacheDir, openFeed } from "./cache.js";
 import { FeedError, feedForDate } from "./gtfs.js";
 import { type Journey, plan, profile } from "./raptor.js";
 import { createAppServer } from "./server.js";
+import { GolemioRealtime } from "./realtime.js";
 import { Planner, RequestError } from "./service.js";
 import { StopIndex, type StopMatch } from "./stops.js";
 import { formatDate, parseClock, parseDate, type ServiceDate, TimeError } from "./time.js";
@@ -41,7 +42,9 @@ The feed is read once into a binary cache (DIR/.transit-raptor-cache, or --cache
 later runs load in a fraction of the time; it is rebuilt when a feed file changes.
 --no-cache reads the CSV files every time and writes nothing.
 serve looks for a new download of the feed every --reload minutes (default 5, 0 = never) and
-switches to it without a restart once its files stop changing.`;
+switches to it without a restart once its files stop changing.
+With GOLEMIO_API_KEY set in the environment (a free key from https://api.golemio.cz/api-keys),
+serve and departures add live delays to departure boards for now.`;
 
 class UsageError extends Error {}
 
@@ -49,6 +52,18 @@ export interface Io {
   out: (line: string) => void;
   err: (line: string) => void;
   now: () => Date;
+  /** The environment (for GOLEMIO_API_KEY); process.env when not given. */
+  env?: Readonly<Record<string, string | undefined>>;
+}
+
+/** Live delays from Golemio when GOLEMIO_API_KEY is set; the key itself is never printed. */
+function withRealtime(planner: Planner, io: Io): Planner {
+  const env = io.env ?? process.env;
+  const key = env.GOLEMIO_API_KEY?.trim();
+  // GOLEMIO_API_URL points elsewhere (a test server, a proxy); Golemio itself by default.
+  const baseUrl = env.GOLEMIO_API_URL?.trim() || undefined;
+  if (key) planner.realtime = new GolemioRealtime(key, baseUrl ? { baseUrl } : {});
+  return planner;
 }
 
 const defaultIo: Io = { out: (l) => console.log(l), err: (l) => console.error(l), now: () => new Date() };
@@ -107,7 +122,7 @@ async function run(argv: string[], io: Io): Promise<number> {
   if (command === "departures") {
     if (!values.stop) throw new UsageError("--stop is required");
     const whole = (text: string | undefined) => (text === undefined ? undefined : /^\d+$/.test(text) ? Number(text) : NaN);
-    return departures(new Planner(values.gtfs, io.now, 1, io.err, cacheDir), io, {
+    return departures(withRealtime(new Planner(values.gtfs, io.now, 1, io.err, cacheDir), io), io, {
       stop: values.stop,
       date: values.date,
       time: values.time,
@@ -184,7 +199,7 @@ async function serve(
   if (!/^\d+$/.test(reloadText) || reload > 24 * 60) {
     throw new UsageError("--reload must be a whole number of minutes from 0 (never) to 1440");
   }
-  const planner = new Planner(gtfs, io.now, 2, io.err, cacheDir);
+  const planner = withRealtime(new Planner(gtfs, io.now, 2, io.err, cacheDir), io);
   const started = performance.now();
   await planner.load(planner.today()); // fail early on a bad feed, and make the first request fast (shapes too)
   io.err(`Loaded today's timetable in ${Math.round(performance.now() - started)} ms`);
@@ -194,6 +209,7 @@ async function serve(
     server.listen(port, host, () => resolveListen());
   });
   io.out(`transit-raptor: http://${host}:${port}/`);
+  io.err(planner.realtime ? "Live delays: from Golemio (GOLEMIO_API_KEY)" : "Live delays: off (set GOLEMIO_API_KEY to add them)");
   if (reload > 0) {
     const timer = setInterval(() => void planner.checkForNewFeed(), reload * 60_000);
     timer.unref(); // the server keeps the process alive, not the timer
@@ -216,14 +232,22 @@ async function departures(planner: Planner, io: Io, request: Parameters<Planner[
     io.out(`No departures from ${answer.stop} after ${answer.time} on ${answer.date}.`);
     return 1;
   }
-  io.out(`Departures from ${answer.stop}, ${answer.date} ${answer.time}`);
+  const live = answer.live === "on" ? " (live)" : answer.live === "error" ? " (live delays unavailable)" : "";
+  io.out(`Departures from ${answer.stop}, ${answer.date} ${answer.time}${live}`);
   const width = Math.max(...answer.departures.map((d) => `${d.mode} ${d.line}`.length));
   for (const d of answer.departures) {
     const platform = d.platform ? `  (platform ${d.platform})` : "";
     const towards = d.headsign ? `towards ${d.headsign}` : "";
-    io.out(`  ${d.departure}  ${(d.minutes <= 0 ? "now" : `in ${d.minutes} min`).padEnd(11)}${`${d.mode} ${d.line}`.padEnd(width)}  ${towards}${platform}`);
+    const late = d.canceled ? "  CANCELED" : d.delay === null ? "" : `  ${delayText(d.delay)}`;
+    io.out(`  ${d.departure}  ${(d.expectedMinutes <= 0 ? "now" : `in ${d.expectedMinutes} min`).padEnd(11)}${`${d.mode} ${d.line}`.padEnd(width)}  ${towards}${platform}${late}`);
   }
   return 0;
+}
+
+/** "+3 min", "on time", "-1 min" (early) from seconds late, counted in whole minutes late. */
+export function delayText(seconds: number): string {
+  const minutes = Math.trunc(seconds / 60); // under a minute either way is on time
+  return minutes === 0 ? "on time" : minutes > 0 ? `+${minutes} min` : `${minutes} min`;
 }
 
 function resolve(index: StopIndex, text: string, option: string): { name: string; stops: number[] } {

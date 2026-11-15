@@ -10,3 +10,6 @@ data/
 playwright-report/
 test-results/
 .compare/
+# Local settings such as GOLEMIO_API_KEY (node --env-file-if-exists=.env): never committed.
+.env
+.env.*

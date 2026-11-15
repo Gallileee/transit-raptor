@@ -425,3 +425,24 @@ select:focus-visible,
 .dot-popup a {
   color: #0b5cad;
 }
+
+/* Live delays on the departures board. */
+.departures .delay {
+  margin-left: 4px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--error);
+}
+.departures .delay.on-time {
+  color: var(--muted);
+  font-weight: 400;
+}
+.departures tr.canceled td {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+.departures tr.canceled td.in {
+  text-decoration: none;
+  color: var(--error);
+  font-weight: 600;
+}

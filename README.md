@@ -215,14 +215,33 @@ keeps the two most recently used dates in memory, and serves:
 - `/departures?stop=NAME`: a departures board, like the one at a stop: time, minutes to go,
   line (in its colour), direction and platform for every platform of the stop. It asks again
   every 30 s while the tab is visible and counts the minutes down on the device's clock in
-  between, so departures that have left drop off even if the server doesn't answer. The times
-  are the timetable's: no live delays (PID publishes those through a separate, keyed API).
+  between, so departures that have left drop off even if the server doesn't answer. With live
+  delays (below), each departure shows "+2 min", "on time" or "canceled", the minutes count to
+  when it is expected, and a vehicle due before now that is late stays on the board.
   `&date=&time=` shows the board for that moment instead, and it stays as it is. In a journey,
   the stop where one gets on links there at that time (the other ways to go from it), and so
   do the dots on the map, in a popup.
 - `GET /api/departures?stop=NAME[&date=][&time=HH:MM][&limit=20][&window=120]`: the next
   departures, from the timetable's patterns (binary search for each pattern's first trip):
   trips that let people on there and go on, so a trip ending at the stop isn't listed.
+  `live` says whether delays were added (`on`, `off`, `error`); each departure has `delay`
+  (seconds, or null), `canceled` and `expectedMinutes`.
+
+**Live delays.** PID publishes where its vehicles are through Golemio, Prague's data platform.
+With a free API key from [api.golemio.cz/api-keys](https://api.golemio.cz/api-keys) in the
+environment as `GOLEMIO_API_KEY`, `serve` and `departures` ask Golemio's departure board
+(`/v2/pid/departureboards`) for the stop's platforms and match its answer by GTFS trip and stop
+id, which are the same as in the feed. Only a board for now (within 5 minutes of the server's
+clock) asks, looking 15 minutes back for late vehicles. Answers are kept 20 s (a key may make
+20 requests in 8 s), the request gives up after 4 s, and if Golemio fails the board shows the
+timetable and says so (logged at most once a minute). The key is sent only in the
+`X-Access-Token` header to Golemio: never to the page, into a URL or the log. Keep it out of
+the repository, e.g. in a gitignored `.env` file:
+
+```bash
+echo "GOLEMIO_API_KEY=..." > .env      # .env is in .gitignore
+node --env-file-if-exists=.env dist/bin.js serve --gtfs data/pid
+```
 - `GET /api/feed`: the timetable in use, `{"firstDate":"2026-11-09","lastDate":"2026-11-22",
   "loadedAt":"2026-11-14T17:30:12.345Z"}`. The dates are `feed_start_date` and `feed_end_date`
   from `feed_info.txt`, or the first and last date with service in the calendar when the feed
@@ -316,7 +335,8 @@ chained-walk bug of 14 Nov (31 of 1,000 journeys differ from before the fix, and
   14 Nov): the two lifts alone take 200 s in the feed, and the street between them is 201 m on
   OpenStreetMap's footpaths (208 m here).
 - Footpaths aren't chained (one walk between two vehicles), as in the paper.
-- No real-time delays, fares, or daylight-saving corrections (GTFS times are
+- Journeys use the timetable only; live delays are on the departures board (with a key).
+- No fares, or daylight-saving corrections (GTFS times are
   measured from "noon minus 12 h", which differs from midnight on the two DST days).
 - Stops without times in `stop_times.txt` take the previous stop's departure instead of an
   interpolated time.
