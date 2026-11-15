@@ -24,7 +24,7 @@ class FakeRealtime implements Realtime {
 
 const late = (trip: string, stop: string, delay: number | null, canceled = false): [string, LiveDeparture] => [
   liveKey(trip, stop),
-  { delay, canceled, atStop: false },
+  { delay, canceled, atStop: false, platform: null },
 ];
 
 type Ride = Extract<LegJson, { kind: "ride" }>;
@@ -67,8 +67,8 @@ describe("live delays in journeys", () => {
   it("doesn't warn when the time to spare covers the delay, or the next vehicle is late too", async () => {
     expect(summary((await journeys(new Map([late("L1a", "A", 60)]))).rides)[1]![1]).toEqual(["200", null, false, false]);
     expect(summary((await journeys(new Map([late("L1a", "A", 150), late("L2a", "B2", 90)]))).rides)[1]![1]).toEqual(["200", 90, false, false]);
-    // An early bus makes it harder: tram 1 a minute late was fine, not with the bus 90 s early.
-    expect(summary((await journeys(new Map([late("L1a", "A", 60), late("L2a", "B2", -90)]))).rides)[1]![1]).toEqual(["200", -90, false, true]);
+    // The next vehicle's delay counts: a minute late was fine; with the bus on time, still fine.
+    expect(summary((await journeys(new Map([late("L1a", "A", 60), late("L2a", "B2", 0)]))).rides)[1]![1]).toEqual(["200", 0, false, false]);
   });
 
   it("counts only the walk of each change, not walks before it", async () => {
@@ -94,6 +94,18 @@ describe("live delays in journeys", () => {
       ["ride", false],
       ["ride", false],
     ]);
+  });
+
+  it("gets on at the platform live data give, if any", async () => {
+    const { answer } = await journeys(
+      new Map<string, LiveDeparture>([[liveKey("L1a", "A"), { delay: 0, canceled: false, atStop: false, platform: "5J" }]]),
+    );
+    const [direct, viaBravo] = answer.journeys.map((j) => j.legs.filter((l): l is Ride => l.kind === "ride"));
+    expect(viaBravo!.map((r) => [r.line, r.from.platform, r.to.platform])).toEqual([
+      ["1", "5J", "1"],
+      ["200", "2", ""],
+    ]);
+    expect(direct![0]!.from.platform).toBe(""); // nothing live for it
   });
 
   it("says when a ride is cancelled", async () => {

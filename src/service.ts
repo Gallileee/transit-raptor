@@ -117,8 +117,8 @@ export type LegJson =
        */
       passed: PassedStop[];
       /**
-       * Live, for a ride leaving within the next hour: seconds late where one gets on (negative:
-       * early), or null when not known.
+       * Live, for a ride leaving within the next hour: seconds late where one gets on (never
+       * negative), or null when not known.
        */
       delay: number | null;
       canceled: boolean;
@@ -203,10 +203,15 @@ export interface DepartureJson {
   platform: string;
   /** Vehicle and stop, as for rides: "yes", "no" or "unknown". */
   access: "yes" | "no" | "unknown";
-  /** Live: seconds late (negative: early), or null when not known (no live data, or no report). */
+  /** Live: seconds late (never negative), or null when not known (no live data, or no report). */
   delay: number | null;
   /** Live: the trip won't run. */
   canceled: boolean;
+  /**
+   * The platform came from live data and isn't the timetable's: a train's track, given on the
+   * day (`platform` is then that track).
+   */
+  platformLive: boolean;
 }
 
 export interface DeparturesResponse {
@@ -394,7 +399,11 @@ export class Planner {
     const until = from + window * 60;
     const live = this.liveWanted(date, from);
     const start = live ? from - LATE_LOOKBACK : from;
-    const found: { at: number; key: string; json: Omit<DepartureJson, "minutes" | "expectedMinutes" | "delay" | "canceled"> }[] = [];
+    const found: {
+      at: number;
+      key: string;
+      json: Omit<DepartureJson, "minutes" | "expectedMinutes" | "delay" | "canceled" | "platformLive">;
+    }[] = [];
     for (const s of stop.stops) {
       for (const { pattern: p, position } of timetable.stopPatterns[s]!) {
         const pattern = timetable.patterns[p]!;
@@ -432,7 +441,20 @@ export class Planner {
         const info = known.get(key);
         const delay = info?.delay ?? null;
         const expected = at + (delay ?? 0);
-        return { at, expected, json: { ...json, minutes: minutesBetween(from, at), expectedMinutes: minutesBetween(from, expected), delay, canceled: info?.canceled ?? false } };
+        const platform = livePlatform(json.platform, info);
+        return {
+          at,
+          expected,
+          json: {
+            ...json,
+            platform,
+            platformLive: platform !== json.platform,
+            minutes: minutesBetween(from, at),
+            expectedMinutes: minutesBetween(from, expected),
+            delay,
+            canceled: info?.canceled ?? false,
+          },
+        };
       })
       // Looked back at for late vehicles: only those still to come stay.
       .filter((d) => d.at >= from || (d.json.delay !== null && !d.json.canceled && d.expected >= from))
@@ -570,7 +592,7 @@ export function journeyJson(
   const { feed } = loaded;
   const known = (leg: Leg) => (leg.kind === "ride" ? live.get(liveKey(leg.tripId, feed.stops[leg.from]!.id)) : undefined);
   // A change is at risk when the vehicle before, as late as it is now, arrives after this one
-  // leaves (as late or early as this one is, if known), counting the walk between them.
+  // leaves (as late as this one is, if known), counting the walk between them.
   let before: { arrival: number; delay: number | null } | undefined;
   let walking = 0;
   const atRisk = journey.legs.map((leg) => {
@@ -639,7 +661,8 @@ function legJson(
     color: route?.color ?? "",
     textColor: route?.textColor ?? "",
     headsign: leg.headsign,
-    from: stopJson(feed, leg.from),
+    // Where one gets on, with a train's track for the day once it is known.
+    from: { ...stopJson(feed, leg.from), platform: livePlatform(feed.stops[leg.from]!.platform, live) },
     to: stopJson(feed, leg.to),
     ...times,
     stops: leg.stopCount,
@@ -651,6 +674,11 @@ function legJson(
     canceled: live?.canceled ?? false,
     changeAtRisk,
   };
+}
+
+/** The platform to show: a live one (a train's track for the day) where known, else the timetable's. */
+function livePlatform(timetable: string, live: LiveDeparture | undefined): string {
+  return live?.platform ?? timetable;
 }
 
 function onShape(feed: Feed, trip: Feed["trips"][number], i: number) {

@@ -188,7 +188,9 @@ function draw() {
       line.append(badge);
       row.append(line);
       row.append(el("td", "", d.headsign));
-      row.append(el("td", "platform", d.platform));
+      const platform = el("td", d.platformLive ? "platform live" : "platform", d.platform);
+      if (d.platformLive) platform.title = "Track for today, from live data";
+      row.append(platform);
       return row;
     }),
   );

@@ -227,7 +227,9 @@ keeps the two most recently used dates in memory, and serves:
   The platform is the feed's `platform_code`; where PID leaves it out (14 metro platforms at
   Muzeum, Můstek, Florenc and Nádraží Veleslavín), it is the track number the platform's
   boarding areas are named after ("Kolej 1"), as IDOS shows them (M1/M2). Trains have no
-  platform in the timetable: it is decided on the day.
+  platform in the timetable: it is decided on the day, and with live delays on, the board
+  shows the track Golemio gives ("4J": track 4, south part), in bold, once it is known (and so
+  does a journey where one gets on a train). `platformLive` marks it in the API.
   `live` says whether delays were added (`on`, `off`, `error`); each departure has `delay`
   (seconds, or null), `canceled` and `expectedMinutes`.
 
@@ -235,7 +237,9 @@ keeps the two most recently used dates in memory, and serves:
 With a free API key from [api.golemio.cz/api-keys](https://api.golemio.cz/api-keys) in the
 environment as `GOLEMIO_API_KEY`, `serve` and `departures` ask Golemio's departure board
 (`/v2/pid/departureboards`) for the stop's platforms and match its answer by GTFS trip and stop
-id, which are the same as in the feed. Only a board for now (within 5 minutes of the server's
+id, which are the same as in the feed. A negative delay (a vehicle ahead, or waiting at its
+first stop) counts as on time: PID's vehicles don't leave early, and IDOS says "no delay"
+for them. Only a board for now (within 5 minutes of the server's
 clock) asks, looking 15 minutes back for late vehicles. Answers are kept 20 s (a key may make
 20 requests in 8 s), the request gives up after 4 s, and if Golemio fails the board shows the
 timetable and says so (logged at most once a minute). The key is sent only in the
@@ -245,7 +249,7 @@ the repository, e.g. in a gitignored `.env` file.
 Journeys get them too: every ride leaving within the next hour shows its delay where one gets
 on ("+3 min" under its time; one question to Golemio for all those stops), a cancelled ride says
 so, and a change is marked as at risk when the vehicle before, taken to stay as late as it is
-now, arrives after the next one leaves (as late or early as that one is), walk included. The
+now, arrives after the next one leaves (as late as that one is), walk included. The
 journeys themselves are still planned on the timetable. `/api/plan` has `live`, and each ride
 `delay`, `canceled` and `changeAtRisk`. To run with the key:
 
