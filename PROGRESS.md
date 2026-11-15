@@ -1,5 +1,32 @@
 # Progress log
 
+## 2026-11-14 (interactive): no more walks in a row (RAPTOR walk step)
+
+Why: found while comparing journeys for the entrance walks (PR #24): a journey with two walks
+in a row, although RAPTOR here allows one walk between two vehicles.
+
+The bug: step 3 of a round walked from each stop a vehicle reached, reading the stop's arrival
+label at the time. A walk from another stop of the same round could have made that label
+earlier first, so the next walk started from a walk (a chain), or, in the other order, a walk
+started from the vehicle's time and then the label it came from was overwritten by a walk, so
+the journey was rebuilt through two walks with times that don't add up (160 -> 300 for a
+100 s walk).
+
+How common on PID (main vs this fix, 2,000 seeded random queries, 16 Nov): 45 journeys
+differ (2.3 %). The old ones had 2 to 6 walks in a row (Ctiněves -> Škola Radlice: six). With
+the fix 19 arrive later (they relied on the chain), 21 arrive at the same time by another way,
+and 5 have more changes but arrive earlier (the comparison takes the journey with the fewest
+vehicles; the one with fewer was only possible with a chain).
+
+Fix: `Labels.rideArrival`, the time the round's vehicle got to a stop, set with the ride
+label and kept when a walk improves the stop. Walks start from `rideArrival`; rebuilding a
+journey, the stop a walk started from is taken as reached by that vehicle. A walk still makes
+a stop earlier for the next round's vehicles.
+
+Tests: `walk-step.test.ts` (8): a four-stop network, in both scan orders (the bug showed
+differently in each), plan and profile. Before the fix 6 of them fail. 180 unit tests.
+Mutations, each caught: walking from the arrival label, not setting `rideArrival`, rebuilding
+without taking the vehicle, the walk's departure from the label.
 ## 2026-11-14 (interactive): street walks between entrances in the normal graph
 
 Why: next step 1, picked by the user. Since PR #5 the step-free station graph walks along the
@@ -23,9 +50,10 @@ Checked:
   OpenStreetMap: Muzeum E6 -> Italská B 530 m (our path: 208 m to E7 + 356 m); E7 -> Italská B
   329 m (ours 356 m); Pankrác E3 -> Zelená liška B 354 m. Ours is a little longer: fine.
 - Journeys: 2,000 seeded random queries (stop names, 6-22 h), old vs new build: 1,999
-  identical, 1 changed with the same arrival.
+  identical, 1 changed with the same arrival. Again after PR #25 (main with the walk fix vs
+  this branch merged with it): all 2,000 identical.
 - That one changed journey showed a bug that was already there: two walks in a row. Fixed
-  separately (next PR).
+  separately (PR #25, above).
 
 Done:
 - `stations.ts`: street walks between entrances in both graphs; entrances marked not
@@ -635,9 +663,7 @@ Mutation checks: without the filter or without the level penalty, one test each 
 
 ## Next steps (in order)
 
-1. RAPTOR's walk step can chain two walks (one walk improves a stop another walk of the same
-   round already started from); seen in 1 of 2,000 random PID journeys.
-2. Hlavní nádraží (C) and Černý Most (B): check whether the two tracks share an island platform
+1. Hlavní nádraží (C) and Černý Most (B): check whether the two tracks share an island platform
    the feed doesn't join (the change between them goes out to the street).
-3. Stops without a time in the feed: interpolate by distance (PID has none, so only for other
+2. Stops without a time in the feed: interpolate by distance (PID has none, so only for other
    feeds).
