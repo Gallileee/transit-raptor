@@ -1,5 +1,40 @@
 # Progress log
 
+## 2026-11-15 (interactive): a journey regression check on the real feed
+
+Why: picked by the user. The chained-walk bug (PR #25) was in 2.3 % of PID journeys and only
+showed up in a one-off script comparing two builds. That comparison should be at hand for
+every change to the algorithm.
+
+Acceptance criteria:
+- One command compares this tree with another version (a git ref) on the same queries over
+  the real feed, and reports identical / different journeys with examples.
+- Journeys that can't be right fail it, whatever the base does.
+- Deterministic (seeded) and fast enough to run before every algorithm change.
+
+Done:
+- `src/compare.ts`: `sampleQueries` (seeded LCG, names sorted first so their order doesn't
+  matter, 06:00-21:59), `journeyKey` (stop and trip ids, not indices), `journeyProblems`
+  (two walks in a row, a leg arriving before it leaves or leaving before the previous one
+  arrives, legs that don't meet, leaving before the query time, changes != rides - 1),
+  `compareJourneys` (every journey of both sides, skips names one side can't resolve),
+  `formatReport`.
+- `scripts/compare-journeys.mjs`, `npm run compare-journeys`: builds the base from git
+  (`git ls-tree` + `git show` of src/ and the tsconfigs into `.compare/<commit>/`, inside the
+  repository so TypeScript finds node_modules; reused next time), each side opens the feed
+  with its own cache folder. Exit 1 on problems (or any difference with --fail-on-diff), 2 on
+  bad arguments or a base that doesn't exist or build.
+- Tests: `compare.test.ts` (12), including the same build compared with itself on the test
+  feed. 192 unit tests.
+
+Verified:
+- Mutations in compare.ts, 12, each caught (one first missed: a name only the base knows;
+  a test was added).
+- PID, 16 Nov: main vs this tree 2,000 identical (43 s), step-free 1,000 identical (13 s).
+  Against 133ab29 (before the walk fix): 31 of 1,000 differ, exit 1 with --fail-on-diff.
+  With the old raptor.ts put back in the tree: 32 journeys with two walks in a row, exit 1.
+  `--count 0` and `--base no-such-branch` exit 2.
+
 ## 2026-11-14 (interactive): no more walks in a row (RAPTOR walk step)
 
 Why: found while comparing journeys for the entrance walks (PR #24): a journey with two walks

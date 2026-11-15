@@ -236,6 +236,7 @@ change. `npm run fetch-pid` also extracts into `data/pid.new` and renames it int
 npm test             # vitest
 npm run typecheck    # tsc --noEmit, strict
 npm run test:e2e     # builds, then the page in a browser (Playwright)
+npm run compare-journeys -- --base main --date 2026-11-16   # this tree vs main, on the real feed
 ```
 
 `test:e2e` needs a browser: `npx playwright install chromium` once, or an installed Edge or
@@ -266,6 +267,18 @@ and keeps the report and traces when it fails.
 
 The real feed was checked by hand in the browser too (see PROGRESS.md, 14 Nov): routes drawn
 along the streets, and step-free journeys compared with IDOS.
+
+**Journeys on the real feed, before and after a change.** `npm run compare-journeys` plans
+the same random queries (1,000 by default; `--count`, `--seed`, `--date`, `--step-free`) with
+this tree and with another version (`--base`, default `main`), which it builds from git into
+`.compare/<commit>/`. Each side reads the feed itself. It prints how many journeys are
+identical, which differ (earlier, later, same time another way) with examples, and any
+journey of this tree that can't be right: two walks in a row, time going backwards, legs that
+don't meet. Those make it exit 1, as does any difference with `--fail-on-diff`. It needs the
+PID feed (`npm run fetch-pid`), so it isn't part of CI; run it before changing the algorithm,
+the station graph or the feed reading. On PID 2,000 queries take about 45 s. It finds the
+chained-walk bug of 14 Nov (31 of 1,000 journeys differ from before the fix, and with the old
+`raptor.ts` 32 have two walks in a row).
 
 ## Limitations
 
