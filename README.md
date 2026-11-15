@@ -224,6 +224,10 @@ keeps the two most recently used dates in memory, and serves:
 - `GET /api/departures?stop=NAME[&date=][&time=HH:MM][&limit=20][&window=120]`: the next
   departures, from the timetable's patterns (binary search for each pattern's first trip):
   trips that let people on there and go on, so a trip ending at the stop isn't listed.
+  The platform is the feed's `platform_code`; where PID leaves it out (14 metro platforms at
+  Muzeum, Můstek, Florenc and Nádraží Veleslavín), it is the track number the platform's
+  boarding areas are named after ("Kolej 1"), as IDOS shows them (M1/M2). Trains have no
+  platform in the timetable: it is decided on the day.
   `live` says whether delays were added (`on`, `off`, `error`); each departure has `delay`
   (seconds, or null), `canceled` and `expectedMinutes`.
 

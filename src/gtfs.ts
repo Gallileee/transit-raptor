@@ -315,6 +315,24 @@ function fromDateKey(key: number): ServiceDate {
   return { year: Math.floor(key / 10000), month: Math.floor(key / 100) % 100, day: key % 100 };
 }
 
+/** Platforms whose boarding areas are all named after one track ("Kolej 2 - Start" -> "2"). */
+function tracksFromAreas(stops: readonly Stop[], stopById: ReadonlyMap<string, number>): Map<number, string> {
+  const named = new Map<number, Set<string>>();
+  for (const stop of stops) {
+    if (stop.locationType !== 4) continue;
+    const platform = stopById.get(stop.parent);
+    if (platform === undefined) continue;
+    const track = /^Kolej (\d+)\b/.exec(stop.name)?.[1] ?? "?";
+    named.set(platform, (named.get(platform) ?? new Set()).add(track));
+  }
+  const tracks = new Map<number, string>();
+  for (const [platform, names] of named) {
+    const [track] = names;
+    if (names.size === 1 && track !== "?") tracks.set(platform, track!);
+  }
+  return tracks;
+}
+
 /** Which service_ids run on `date`, from calendar.txt and calendar_dates.txt. */
 export async function activeServices(dir: string, date: ServiceDate): Promise<Set<string>> {
   return servicesOn(await readCalendar(dir), date);
@@ -360,6 +378,14 @@ export async function compileFeed(dir: string): Promise<CompiledFeed> {
     stops.push(stop);
     stopById.set(stop.id, index);
   });
+
+  // A platform without a platform_code takes the track number its boarding areas are named
+  // after ("Kolej 1"), when they all agree: PID leaves the code out at 14 metro platforms
+  // (Muzeum, Můstek, Florenc, Nádraží Veleslavín) and names their areas. Where the feed has both,
+  // they agree at 106 of 108 platforms (Vysočanská has them crossed; the code is kept there).
+  for (const [platform, track] of tracksFromAreas(stops, stopById)) {
+    if (!stops[platform]!.platform) stops[platform] = { ...stops[platform]!, platform: track };
+  }
 
   // Unknown on a platform or entrance means "as the station" (a parent may come later in the file).
   for (const stop of stops) {
