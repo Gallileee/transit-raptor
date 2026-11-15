@@ -1,5 +1,6 @@
 // The departures board: the next departures from a stop, refreshed every 30 s while the page is
-// visible, with "in N min" counted down on the device's clock in between.
+// visible, with "in N min" counted down on the device's clock in between. With ?date=&time= in
+// the address (a link from a journey) it shows the board for that moment instead, and stays.
 // Everything shown comes from the JSON API and is written with textContent, never as HTML.
 
 const $ = (id) => document.getElementById(id);
@@ -15,6 +16,8 @@ const TICK_MS = 15_000;
 /** The board shown: the stop asked for and the departures with their times as Dates. */
 let board;
 let refreshTimer;
+/** A board for another moment ({ date: "YYYY-MM-DD", time: "HH:MM" }), or undefined for now. */
+let planned;
 
 const pad = (n) => String(n).padStart(2, "0");
 const isoDate = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -61,21 +64,22 @@ input.addEventListener("input", () => {
 
 form.addEventListener("submit", (event) => {
   event.preventDefault();
-  show(input.value);
+  show(input.value); // a stop typed in: from now
 });
 
-async function show(stop) {
-  history.replaceState(null, "", `?${new URLSearchParams({ stop })}`);
+async function show(stop, at = undefined) {
+  planned = at;
+  history.replaceState(null, "", `?${new URLSearchParams({ stop, ...at })}`);
   suggestionsBox.hidden = true;
   clearTimeout(refreshTimer);
   setStatus("Loading…");
   await refresh(stop);
 }
 
-/** Ask for the departures from now (the device's clock) and draw them. */
+/** Ask for the departures from now (the device's clock), or the planned moment, and draw them. */
 async function refresh(stop) {
   const now = new Date();
-  const query = new URLSearchParams({ stop, date: isoDate(now), time: clock(now) });
+  const query = new URLSearchParams({ stop, ...(planned ?? { date: isoDate(now), time: clock(now) }) });
   let body;
   try {
     const response = await fetch(`/api/departures?${query}`);
@@ -94,18 +98,42 @@ async function refresh(stop) {
     return;
   }
   input.value = body.stop;
-  board = { stop: body.stop, at: now, departures: body.departures.map((d) => ({ ...d, time: when(now, body.time, d.minutes) })) };
+  const asked = moment(body.date, body.time);
+  board = {
+    stop: body.stop,
+    at: now,
+    // A planned board counts from its own moment and doesn't move.
+    reference: planned ? asked : undefined,
+    departures: body.departures.map((d) => ({ ...d, time: new Date(asked.getTime() + d.minutes * 60_000) })),
+  };
   draw();
-  setStatus(body.departures.length === 0 ? `No departures from ${body.stop} in the next 2 hours.` : "");
-  $("updated").textContent = `Updated ${now.toLocaleTimeString("en-GB")}`;
-  schedule(stop);
+  const later = planned ? ` after ${body.time} on ${day(body.date)}` : " in the next 2 hours";
+  setStatus(body.departures.length === 0 ? `No departures from ${body.stop}${later}.` : "");
+  const updated = $("updated");
+  if (planned) {
+    const live = el("a", "", "Show departures from now");
+    live.href = `?${new URLSearchParams({ stop: body.stop })}`;
+    live.addEventListener("click", (event) => {
+      event.preventDefault();
+      show(body.stop);
+    });
+    updated.replaceChildren(`Timetable for ${day(body.date)} at ${body.time} · `, live);
+  } else {
+    updated.textContent = `Updated ${now.toLocaleTimeString("en-GB")}`;
+    schedule(stop);
+  }
 }
 
-/** The departure as a Date: the request's minute plus the minutes the API counted. */
-function when(now, time, minutes) {
+/** "2026-11-16", "08:05" -> that minute, local time. */
+function moment(date, time) {
+  const [y, mo, d] = date.split("-").map(Number);
   const [h, m] = time.split(":").map(Number);
-  const asked = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, m);
-  return new Date(asked.getTime() + minutes * 60_000);
+  return new Date(y, mo - 1, d, h, m);
+}
+
+/** "2026-11-30" -> "30 Nov 2026". */
+function day(iso) {
+  return new Date(`${iso}T00:00`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 }
 
 function schedule(stop) {
@@ -117,7 +145,7 @@ function schedule(stop) {
 }
 
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden && board && Date.now() - board.at.getTime() > REFRESH_MS) refresh(board.stop);
+  if (!document.hidden && board && !planned && Date.now() - board.at.getTime() > REFRESH_MS) refresh(board.stop);
 });
 
 // --- drawing --------------------------------------------------------------------------------
@@ -129,7 +157,7 @@ function inMinutes(time, now = new Date()) {
 }
 
 function draw() {
-  const now = new Date();
+  const now = board.reference ?? new Date();
   $("caption").textContent = `Next departures from ${board.stop}`;
   // Departures that have left since the last refresh drop off the board.
   const shown = board.departures.filter((d) => d.time.getTime() >= now.getTime() - 60_000 + 1);
@@ -166,7 +194,7 @@ function showSuggestions(names) {
       button.type = "button";
       button.addEventListener("click", () => {
         input.value = name;
-        show(name);
+        show(name, planned);
       });
       return button;
     }),
@@ -177,5 +205,7 @@ function showSuggestions(names) {
 const params = new URLSearchParams(location.search);
 if (params.get("stop")) {
   input.value = params.get("stop");
-  show(params.get("stop"));
+  const [date, time] = [params.get("date"), params.get("time")];
+  const at = /^\d{4}-\d{2}-\d{2}$/.test(date ?? "") && /^\d{1,2}:\d{2}$/.test(time ?? "") ? { date, time } : undefined;
+  show(params.get("stop"), at);
 }

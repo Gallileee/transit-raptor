@@ -405,3 +405,23 @@ select:focus-visible,
     padding: 6px;
   }
 }
+
+/* A stop in a journey links to its departures board: quiet until pointed at. */
+.stop-link {
+  color: inherit;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+.stop-link:hover,
+.stop-link:focus-visible {
+  color: var(--accent);
+  text-decoration-style: solid;
+}
+
+/* Leaflet's popups are white in both themes: dark text on them. */
+.dot-popup {
+  color: #1c2430;
+}
+.dot-popup a {
+  color: #0b5cad;
+}
