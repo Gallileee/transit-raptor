@@ -51,7 +51,9 @@ It is a learning project: [OpenTripPlanner](https://www.opentripplanner.org/) an
    on. These times replace the distance estimate in those stations, in both directions.
    The graph also walks along the street between a station's entrances, so a path can leave
    by one entrance and come back in by another, or reach a stop beyond the nearest one's
-   walking range; a change between platforms that does this says "out via the street".
+   walking range; a change between platforms that does this says "out one entrance and in
+   another" (at Muzeum, step-free, that is up to the street; at Hlavní nádraží, whose two
+   side platforms the feed joins only outside their entrances, it is through the vestibule).
 4. **RAPTOR** (`raptor.ts`), from Delling, Pajor & Werneck,
    [*Round-Based Public Transit Routing*](https://www.microsoft.com/en-us/research/?p=162045)
    (Transportation Science, 2015). Round *k* finds the earliest arrival at every stop using at
@@ -81,7 +83,7 @@ It is a learning project: [OpenTripPlanner](https://www.opentripplanner.org/) an
    step-free way is out to the street and back (Muzeum A ↔ C has a lift from each platform to
    the street, nothing inside, as DPP's own station page says), the path goes along the
    street between the station's entrances, and the journey says so: "change platforms at
-   Muzeum, out via the street" (`street: true` on the walk in the API). Stops and trips the feed says nothing about are allowed, and the page says on
+   Muzeum, out one entrance and in another" (`street: true` on the walk in the API). Stops and trips the feed says nothing about are allowed, and the page says on
    which rides access isn't confirmed (most street stops in PID).
 7. **Drawing rides along the street** (`shapes.ts`). `shapes.txt` gives every trip's line on
    the map (Prague: 7,572 shapes, 3.3 M points). The part between where one gets on and off is

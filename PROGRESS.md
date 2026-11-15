@@ -1,5 +1,26 @@
 # Progress log
 
+## 2026-11-15 (interactive): island platforms at Hlavní nádraží and Černý Most? No
+
+Why: next step 1, picked by the user. The station graph joins tracks 1 and 2 of Hlavní nádraží
+(C) and Černý Most (B) only outside their entrances, so a change between them was marked "out
+via the street". Wrong if the tracks share an island platform the feed doesn't join.
+
+Found:
+- Both have side platforms. Hlavní nádraží: e15.cz on the station's 50 years ("boční
+  nástupiště", unusual in Prague, from the underground-tram plans with doors on the right).
+  Černý Most: a surface station with side platforms, the only one of that type on line B
+  (waymarking.com; a user page, but it matches the feed). Rajská zahrada and Vyšehrad were
+  not checked.
+- So no walkway is missing. But at Hlavní nádraží the "entrances" are pairs of fare-gate lines
+  10 m apart (E1: U142S1E111 for track 1, U142S1E112 for track 2; E2, E3 likewise) at level
+  "Vrchlického sady", opening into a shared vestibule the feed leaves out. The change goes
+  through that vestibule, not the street.
+
+Done: the label says what the graph knows, for every station: "change platforms at X, out
+one entrance and in another" (was "out via the street"), on the page and in the CLI. The API
+field stays `street`. Journeys are unchanged (text only), so compare-journeys wasn't needed.
+
 ## 2026-11-15 (interactive): a journey regression check on the real feed
 
 Why: picked by the user. The chained-walk bug (PR #25) was in 2.3 % of PID journeys and only
@@ -698,7 +719,6 @@ Mutation checks: without the filter or without the level penalty, one test each 
 
 ## Next steps (in order)
 
-1. Hlavní nádraží (C) and Černý Most (B): check whether the two tracks share an island platform
-   the feed doesn't join (the change between them goes out to the street).
-2. Stops without a time in the feed: interpolate by distance (PID has none, so only for other
+1. Stops without a time in the feed: interpolate by distance (PID has none, so only for other
    feeds).
+2. compare-journeys takes ~45 s for 2,000 queries; profile it if it gets run often.
