@@ -336,3 +336,72 @@ select:focus-visible,
   border-left: 3px solid var(--error);
   color: var(--error);
 }
+
+.nav {
+  margin-bottom: 6px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+/* The departures board: one column, like the board at a stop. */
+.board {
+  flex: 1;
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 20px 16px;
+}
+
+.row .grow {
+  flex: 1;
+  min-width: 12em;
+}
+
+.departures {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.departures caption {
+  text-align: left;
+  font-weight: 600;
+  padding: 0 0 6px;
+}
+
+.departures th,
+.departures td {
+  text-align: left;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.departures th {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.departures .time,
+.departures .in {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.departures .in {
+  font-weight: 600;
+}
+
+.updated {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+@media (max-width: 480px) {
+  .departures th,
+  .departures td {
+    padding: 6px;
+  }
+}

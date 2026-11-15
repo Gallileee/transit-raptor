@@ -143,8 +143,8 @@ time in seconds vs a `HH:MM:SS` string); strict types catch that at compile time
 
 The web page is plain HTML, CSS and JavaScript (`web/`, no build step) with
 [Leaflet](https://leafletjs.com/) 1.9.4 from cdnjs (pinned, with subresource integrity) and
-OpenStreetMap tiles. The server is `node:http` (`src/server.ts`): three routes don't need a
-framework.
+OpenStreetMap tiles. The server is `node:http` (`src/server.ts`): a handful of routes don't
+need a framework.
 
 ## Install and run
 
@@ -162,6 +162,7 @@ node dist/bin.js plan --gtfs data/pid --from "Anděl" --to "Muzeum" --date 2026-
 node dist/bin.js plan --gtfs data/pid --from "Anděl" --to "Letiště" --time 8:00 --list   # the next hour
 node dist/bin.js plan --gtfs data/pid --from "Hlavní nádraží" --to "Křižíkova" --step-free
 node dist/bin.js stops --gtfs data/pid --search "nadrazi"
+node dist/bin.js departures --gtfs data/pid --stop "Anděl" --limit 8      # the next departures
 ```
 
 `--date` and `--time` default to now. `--window MIN` (default 60) is how far after `--time`
@@ -211,6 +212,14 @@ keeps the two most recently used dates in memory, and serves:
   or `unknown`. The step-free timetable of a date is built on its first use (~0.4 s) and kept.
   `feed` says which timetable answered (as `/api/feed`), so the page notices a reload.
 - `GET /api/stops?q=TEXT[&date=]`: stop names for the suggestions.
+- `/departures?stop=NAME`: a departures board, like the one at a stop: time, minutes to go,
+  line (in its colour), direction and platform for every platform of the stop. It asks again
+  every 30 s while the tab is visible and counts the minutes down on the device's clock in
+  between, so departures that have left drop off even if the server doesn't answer. The times
+  are the timetable's: no live delays (PID publishes those through a separate, keyed API).
+- `GET /api/departures?stop=NAME[&date=][&time=HH:MM][&limit=20][&window=120]`: the next
+  departures, from the timetable's patterns (binary search for each pattern's first trip):
+  trips that let people on there and go on, so a trip ending at the stop isn't listed.
 - `GET /api/feed`: the timetable in use, `{"firstDate":"2026-11-09","lastDate":"2026-11-22",
   "loadedAt":"2026-11-14T17:30:12.345Z"}`. The dates are `feed_start_date` and `feed_end_date`
   from `feed_info.txt`, or the first and last date with service in the calendar when the feed
@@ -219,7 +228,7 @@ keeps the two most recently used dates in memory, and serves:
 
 Bad input gets `400` with a message, and for an unknown or ambiguous stop a list of names to
 pick from; a feed that can't be loaded gets `503`. The server listens on 127.0.0.1 unless told
-otherwise, serves a fixed list of three files (no URL path reaches the file system), and sends a
+otherwise, serves a fixed list of five files (no URL path reaches the file system), and sends a
 Content-Security-Policy that only allows cdnjs and the map tiles. The page writes everything it
 shows with `textContent`, and only uses a line colour if it is six hex digits.
 
@@ -262,7 +271,10 @@ a search from the URL and from the form (with stop-name suggestions, and the sea
 the URL across a reload), picking a journey by click, keyboard and tap and the map redrawn
 (lines, dashed walks, dots, all inside the visible map), an ambiguous and an unknown stop, the
 step-free checkbox, line colours from the feed, durations that match the times shown, the
-timetable in the footer (in use, ended, and replaced by a reload), phone width and dark mode. It runs without the internet: Leaflet is served from `node_modules`
+timetable in the footer (in use, ended, and replaced by a reload), phone width and dark mode.
+`e2e/departures.e2e.ts` does the same for the departures board, with the browser's clock under
+the test's control: the board, the countdown and the refresh every 30 s, departures dropping off
+while the server doesn't answer, an ambiguous stop, and the links between the pages. It runs without the internet: Leaflet is served from `node_modules`
 (the page's integrity hashes prove it is the cdnjs file), map tiles are a blank image, and any
 other outside request, console error or exception fails the test. CI runs it as its own job
 and keeps the report and traces when it fails.
