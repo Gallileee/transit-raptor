@@ -9,3 +9,4 @@ data/
 # Playwright reports and traces.
 playwright-report/
 test-results/
+.compare/
