@@ -119,7 +119,8 @@ async function search() {
   }
   showNotice(body.date);
   const kind = stepFree ? " step-free" : "";
-  setStatus(`${body.from} → ${body.to}, ${body.date}: ${journeys.length}${kind} journey${journeys.length > 1 ? "s" : ""} (${ms} ms)`);
+  const live = { on: " · live delays from PID", error: " · live delays unavailable" }[body.live] ?? "";
+  setStatus(`${body.from} → ${body.to}, ${body.date}: ${journeys.length}${kind} journey${journeys.length > 1 ? "s" : ""} (${ms} ms)${live}`);
   results.replaceChildren(...journeys.map(journeyItem));
   select(0);
 }
@@ -246,7 +247,13 @@ function journeyItem(journey, index) {
   const legs = el("ol", "legs");
   for (const leg of journey.legs) {
     const row = el("li", "leg");
-    row.append(el("span", "time", leg.departure));
+    const time = el("span", "time", leg.departure);
+    // Live, for rides of the next hour: "+3 min" or "on time" under the time.
+    if (leg.kind === "ride" && leg.delay !== null && !leg.canceled) {
+      const late = delayText(leg.delay);
+      time.append(el("span", late === "on time" ? "delay on-time" : "delay", late));
+    }
+    row.append(time);
     if (leg.kind === "walk") {
       row.append(el("span", "badge walk", "walk"));
       const where =
@@ -271,6 +278,8 @@ function journeyItem(journey, index) {
       if (stepFree && leg.access === "unknown") text.append(el("span", "unconfirmed", " · step-free access not confirmed"));
       if (leg.access === "yes") badge.title += " · step-free";
       row.append(text);
+      if (leg.canceled) row.append(el("span", "risk", `${leg.mode} ${leg.line} at ${leg.departure} is canceled`));
+      else if (leg.changeAtRisk) row.append(el("span", "risk", "The vehicle before is late: this change may be missed"));
       if (leg.passed.length > 0) row.append(passedList(leg.passed));
     }
     legs.append(row);
@@ -316,6 +325,12 @@ function dotPopup(stop, time) {
   link.href = boardUrl(stop, time);
   box.append(link);
   return box;
+}
+
+/** "+3 min", "on time", "-1 min" (early) from seconds late, as the departures board says it. */
+function delayText(seconds) {
+  const minutes = Math.trunc(seconds / 60); // under a minute either way is on time
+  return minutes === 0 ? "on time" : minutes > 0 ? `+${minutes} min` : `${minutes} min`;
 }
 
 /** "3 stops in between", opened to list them with their times. */

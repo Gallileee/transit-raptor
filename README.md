@@ -236,7 +236,14 @@ clock) asks, looking 15 minutes back for late vehicles. Answers are kept 20 s (a
 20 requests in 8 s), the request gives up after 4 s, and if Golemio fails the board shows the
 timetable and says so (logged at most once a minute). The key is sent only in the
 `X-Access-Token` header to Golemio: never to the page, into a URL or the log. Keep it out of
-the repository, e.g. in a gitignored `.env` file:
+the repository, e.g. in a gitignored `.env` file.
+
+Journeys get them too: every ride leaving within the next hour shows its delay where one gets
+on ("+3 min" under its time; one question to Golemio for all those stops), a cancelled ride says
+so, and a change is marked as at risk when the vehicle before, taken to stay as late as it is
+now, arrives after the next one leaves (as late or early as that one is), walk included. The
+journeys themselves are still planned on the timetable. `/api/plan` has `live`, and each ride
+`delay`, `canceled` and `changeAtRisk`. To run with the key:
 
 ```bash
 echo "GOLEMIO_API_KEY=..." > .env      # .env is in .gitignore
@@ -335,7 +342,9 @@ chained-walk bug of 14 Nov (31 of 1,000 journeys differ from before the fix, and
   14 Nov): the two lifts alone take 200 s in the feed, and the street between them is 201 m on
   OpenStreetMap's footpaths (208 m here).
 - Footpaths aren't chained (one walk between two vehicles), as in the paper.
-- Journeys use the timetable only; live delays are on the departures board (with a key).
+- Journeys are planned on the timetable; live delays (with a key) are shown on them and can
+  flag a change at risk, but don't change which journeys are found. A delay is taken to last to
+  where one gets off. Journeys of the day before, after midnight, get no live data.
 - No fares, or daylight-saving corrections (GTFS times are
   measured from "noon minus 12 h", which differs from midnight on the two DST days).
 - Stops without times in `stop_times.txt` take the previous stop's departure instead of an
