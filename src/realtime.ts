@@ -15,11 +15,20 @@
 
 /** What the vehicle is doing on one departure, as far as Golemio knows. */
 export interface LiveDeparture {
-  /** Seconds late (negative: early), or null when the vehicle doesn't report. */
+  /**
+   * Seconds late, or null when the vehicle doesn't report. Never negative: Golemio reports a
+   * vehicle that is ahead, or waiting at its first stop, as early (R19 at Praha hl.n.: -3 min,
+   * IDOS "no delay"), but PID's vehicles don't leave before their time.
+   */
   readonly delay: number | null;
   readonly canceled: boolean;
   /** The vehicle is at the stop now. */
   readonly atStop: boolean;
+  /**
+   * The platform it leaves from, as Golemio knows it: for trains the track they are given on
+   * the day ("4J": track 4, south part), null until then; for the rest the timetable's code.
+   */
+  readonly platform: string | null;
 }
 
 export interface LiveQuery {
@@ -53,7 +62,7 @@ export interface GolemioOptions {
 
 interface GolemioDeparture {
   delay?: { is_available?: boolean; seconds?: number | null } | null;
-  stop?: { id?: string } | null;
+  stop?: { id?: string; platform_code?: string | null } | null;
   trip?: { id?: string; is_canceled?: boolean; is_at_stop?: boolean } | null;
 }
 
@@ -121,9 +130,10 @@ export class GolemioRealtime implements Realtime {
       if (!tripId || !stopId) continue;
       const seconds = d.delay?.is_available ? d.delay.seconds : null;
       live.set(liveKey(tripId, stopId), {
-        delay: typeof seconds === "number" && Number.isFinite(seconds) ? Math.round(seconds) : null,
+        delay: typeof seconds === "number" && Number.isFinite(seconds) ? Math.max(0, Math.round(seconds)) : null,
         canceled: d.trip?.is_canceled === true,
         atStop: d.trip?.is_at_stop === true,
+        platform: typeof d.stop?.platform_code === "string" && d.stop.platform_code.trim() ? d.stop.platform_code.trim() : null,
       });
     }
     return live;

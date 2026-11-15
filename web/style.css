@@ -464,3 +464,8 @@ select:focus-visible,
   font-size: 0.85rem;
   font-weight: 600;
 }
+
+/* A train's track for the day, from live data. */
+.departures .platform.live {
+  font-weight: 700;
+}

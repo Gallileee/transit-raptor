@@ -19,10 +19,12 @@ const GOLEMIO_ANSWER = {
   stops: [],
   infotexts: [],
   departures: [
-    { delay: { is_available: true, minutes: 2, seconds: 150 }, stop: { id: "A" }, trip: { id: "L3slow", is_canceled: false, is_at_stop: false } },
+    { delay: { is_available: true, minutes: 2, seconds: 150 }, stop: { id: "A", platform_code: "4J" }, trip: { id: "L3slow", is_canceled: false, is_at_stop: false } },
     // Not available: whatever the seconds say, the delay isn't known.
-    { delay: { is_available: false, minutes: 0, seconds: 0 }, stop: { id: "A" }, trip: { id: "L1a", is_canceled: false, is_at_stop: true } },
-    { delay: { is_available: true, minutes: 0, seconds: 20 }, stop: { id: "A" }, trip: { id: "L3express", is_canceled: true, is_at_stop: false } },
+    { delay: { is_available: false, minutes: 0, seconds: 0 }, stop: { id: "A", platform_code: null }, trip: { id: "L1a", is_canceled: false, is_at_stop: true } },
+    { delay: { is_available: true, minutes: 0, seconds: 20 }, stop: { id: "A", platform_code: " " }, trip: { id: "L3express", is_canceled: true, is_at_stop: false } },
+    // Ahead of time, or waiting at its first stop: on time (PID's vehicles don't leave early).
+    { delay: { is_available: true, minutes: -3, seconds: -185 }, stop: { id: "B2" }, trip: { id: "L2a", is_canceled: false, is_at_stop: true } },
     { delay: { is_available: true, seconds: 60 }, stop: {}, trip: { id: "no-stop" } }, // skipped
   ],
 };
@@ -71,9 +73,10 @@ describe("GolemioRealtime", () => {
     expect(requests[0]!.headers["x-access-token"]).toBe(KEY);
     expect(requests[0]!.url).not.toContain(KEY);
     expect([...live]).toEqual([
-      [liveKey("L3slow", "A"), { delay: 150, canceled: false, atStop: false }],
-      [liveKey("L1a", "A"), { delay: null, canceled: false, atStop: true }],
-      [liveKey("L3express", "A"), { delay: 20, canceled: true, atStop: false }],
+      [liveKey("L3slow", "A"), { delay: 150, canceled: false, atStop: false, platform: "4J" }], // a train's track
+      [liveKey("L1a", "A"), { delay: null, canceled: false, atStop: true, platform: null }],
+      [liveKey("L3express", "A"), { delay: 20, canceled: true, atStop: false, platform: null }],
+      [liveKey("L2a", "B2"), { delay: 0, canceled: false, atStop: true, platform: null }],
     ]);
   });
 
@@ -103,7 +106,7 @@ describe("GolemioRealtime", () => {
     reply = () => "hang";
     await expect(golemio.departures(QUERY)).rejects.toThrow("no answer in time");
     reply = () => ({ status: 200, body: JSON.stringify(GOLEMIO_ANSWER) });
-    expect((await golemio.departures(QUERY)).size).toBe(3);
+    expect((await golemio.departures(QUERY)).size).toBe(4);
     await expect(new GolemioRealtime(KEY, { baseUrl: "http://127.0.0.1:9" }).departures(QUERY)).rejects.toThrow("can't be reached");
   });
 });
@@ -120,8 +123,8 @@ class FakeRealtime implements Realtime {
 
 describe("live delays on the departures board", () => {
   const live = new Map<string, LiveDeparture>([
-    [liveKey("L3slow", "A"), { delay: 150, canceled: false, atStop: false }],
-    [liveKey("L3express", "A"), { delay: 20, canceled: true, atStop: false }],
+    [liveKey("L3slow", "A"), { delay: 150, canceled: false, atStop: false, platform: null }],
+    [liveKey("L3express", "A"), { delay: 20, canceled: true, atStop: false, platform: null }],
   ]);
   const board = (planner: Planner, time: string) => planner.departures({ stop: "alpha", date: "2026-11-10", time, limit: 3 });
 
@@ -163,9 +166,9 @@ describe("live delays on the departures board", () => {
     const planner = new Planner(MINI, () => new Date(2026, 10, 10, 8, 1, 10));
     planner.realtime = new FakeRealtime(
       new Map<string, LiveDeparture>([
-        [liveKey("L3slow", "A"), { delay: 400, canceled: false, atStop: false }], // 08:00 -> 08:06:40
-        [liveKey("L3express", "A"), { delay: 20, canceled: false, atStop: false }], // 08:05 -> 08:05:20
-        [liveKey("L1a", "A"), { delay: 120, canceled: true, atStop: false }], // 08:00, cancelled
+        [liveKey("L3slow", "A"), { delay: 400, canceled: false, atStop: false, platform: null }], // 08:00 -> 08:06:40
+        [liveKey("L3express", "A"), { delay: 20, canceled: false, atStop: false, platform: null }], // 08:05 -> 08:05:20
+        [liveKey("L1a", "A"), { delay: 120, canceled: true, atStop: false, platform: null }], // 08:00, cancelled
       ]),
     );
     expect((await board(planner, "08:01")).departures.map((d) => [d.departure, d.line, d.expectedMinutes])).toEqual([
@@ -173,6 +176,24 @@ describe("live delays on the departures board", () => {
       ["08:00", "300", 5],
       ["08:10", "1", 9],
     ]);
+  });
+
+  it("shows the platform live data give (a train's track for the day), and says so", async () => {
+    const planner = new Planner(MINI, () => new Date(2026, 10, 10, 7, 58));
+    planner.realtime = new FakeRealtime(
+      new Map<string, LiveDeparture>([
+        [liveKey("L1a", "A"), { delay: 0, canceled: false, atStop: false, platform: "3S" }],
+        [liveKey("L3slow", "A"), { delay: 0, canceled: false, atStop: false, platform: "" }],
+        [liveKey("L3express", "A"), { delay: 0, canceled: false, atStop: false, platform: null }],
+      ]),
+    );
+    expect((await board(planner, "07:58")).departures.map((d) => [d.line, d.platform, d.platformLive])).toEqual([
+      ["1", "3S", true],
+      ["300", "", false],
+      ["300", "", false],
+    ]);
+    planner.realtime = undefined;
+    expect((await board(planner, "07:58")).departures.every((d) => !d.platformLive)).toBe(true);
   });
 
   it("doesn't ask for a board more than 5 minutes from now", async () => {
@@ -224,7 +245,7 @@ describe("the CLI with GOLEMIO_API_KEY", () => {
     expect(out).toEqual([
       "Departures from Alpha, 2026-11-10 07:58 (live)",
       "  08:00  in 2 min   tram 1   towards Charlie",
-      "  08:00  in 4 min   bus 300  towards Delta, Náměstí  +2 min", // expected 08:02:30
+      "  08:00  in 4 min   bus 300  towards Delta, Náměstí  (platform 4J)  +2 min", // expected 08:02:30; platform from live data
       "  08:05  in 7 min   bus 300  towards Delta, Náměstí  CANCELED",
     ]);
     expect(requests[0]!.headers["x-access-token"]).toBe(KEY);

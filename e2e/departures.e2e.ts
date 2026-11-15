@@ -77,6 +77,8 @@ test("shows live delays and cancellations when the server has them", async ({ pa
       body.departures[1].delay = 150; // bus 300: 2.5 min late, so expected at 08:02:30
       body.departures[1].expectedMinutes = 4;
       body.departures[2].canceled = true; // the express
+      body.departures[3].platform = "4J"; // as a train's track for the day would come
+      body.departures[3].platformLive = true;
     }
     await route.fulfill({ response, json: body });
   });
@@ -88,6 +90,12 @@ test("shows live delays and cancellations when the server has them", async ({ pa
     ["08:05", "canceled", "300", "Delta, Náměstí", ""],
   ]);
   await expect(rows(page).nth(2)).toHaveClass("canceled");
+  const track = rows(page).nth(3).locator(".platform");
+  await expect(track).toHaveText("4J");
+  await expect(track).toHaveClass("platform live");
+  await expect(track).toHaveAttribute("title", "Track for today, from live data");
+  await expect(track).toHaveCSS("font-weight", "700");
+  await expect(rows(page).nth(0).locator(".platform")).toHaveClass("platform");
   await expect(rows(page).nth(1).locator(".delay")).toHaveCSS("font-weight", "600");
   await expect(page.locator("#updated")).toHaveText(/^Updated 07:58:0\d · live delays from PID$/);
 

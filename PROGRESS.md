@@ -1,5 +1,34 @@
 # Progress log
 
+## 2026-11-15 (interactive): trains' tracks from live data
+
+Why: next step 2, picked by the user. Trains have no platform in the timetable (734 train stops
+without a code); the board's Platform column was empty for them.
+
+Golemio (looked at with the user's key, Praha hlavní nádraží, Sunday 20:52): `stop.platform_code`
+is the train's track with its part ("4J", "3S", "7J"), or null until it is given; for the
+other modes it repeats the timetable's code.
+
+Done:
+- `LiveDeparture.platform` (a non-blank string, trimmed, or null). Boards: `platform` is the
+  live one where known, and `platformLive` says it came from live data and differs from the
+  timetable (shown in bold, title "Track for today, from live data"). Journeys: the stop where
+  one gets on a ride takes the live platform too.
+- Found on the way: Golemio gives R19 (Brno, waiting at its first stop) -3 min, which the board
+  showed as "-3 min" and "now" two minutes before it left; IDOS says "no delay". PID's vehicles
+  don't leave early, so negative delays are now 0, read once in realtime.ts (board, journeys
+  and the change-at-risk check all follow).
+- Tests: realtime (track parsing, a blank one, an early vehicle), boards and journeys with a
+  live platform, the page's bold track. 229 unit, 34 browser tests.
+
+Verified:
+- Mutations, 7 of 7 caught (no trimming, no live platform, timetable platform always,
+  platformLive on any live data, journeys without it, the page without the class, no clamp).
+- Real key, against IDOS's train departures at Praha hl.n. (20:55): S8 4J, R19 3S, S7 3J, S22
+  7S, S9 7J: the same 5 tracks. R21 and R15 have a track in IDOS (6S, 5S) but not yet in
+  Golemio: their column stays empty until Golemio has it. After the clamp: R19 "on time",
+  "2 min", 3S, as IDOS. A journey Praha hl.n. -> Praha-Vysočany: S22 from track 7S.
+
 ## 2026-11-15 (interactive): metro platforms the feed leaves without a code
 
 Why: next step 2, picked by the user. On the board, Florenc's metro departures had an empty
@@ -886,7 +915,6 @@ Mutation checks: without the filter or without the level penalty, one test each 
 
 1. Plan around a change at risk: offer the next journey that doesn't rely on it (search again
    from the late vehicle's expected arrival).
-2. Trains' platforms on the board from Golemio (it reports the track a train stops at).
-3. Stops without a time in the feed: interpolate by distance (PID has none, so only for other
+2. Stops without a time in the feed: interpolate by distance (PID has none, so only for other
    feeds).
-4. compare-journeys takes ~45 s for 2,000 queries; profile it if it gets run often.
+3. compare-journeys takes ~45 s for 2,000 queries; profile it if it gets run often.
