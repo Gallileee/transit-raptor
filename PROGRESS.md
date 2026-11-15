@@ -34,7 +34,18 @@ Done:
 Verified:
 - Mutations, 18 of 18 caught (3 first missed: is_available ignored, a cancelled late trip kept,
   order by timetable time; tests added).
-- Not yet with a real key (it is the user's to get): next step 1.
+- With the user's key (in a gitignored .env, never read or printed; launch config
+  transit-raptor-live), Sunday 15 Nov 20:15-20:16:
+  - Anděl: our board against Golemio's raw answer for the same platforms and minute, from a
+    separate script: all 18 departures in 8 minutes carry the same delay to the second
+    (-26 to +124 s), so the matching by trip and stop is right, and Golemio takes `ids`
+    repeated for several platforms.
+  - Against IDOS's departures for Anděl 25 s apart, some delays differ (tram 4 Radlická: IDOS
+    "bez zpoždění", Golemio +124 s; tram 20 Dědina: IDOS 1 min, Golemio 14 s): IDOS has its
+    own source and rounding, so it isn't the reference for live data.
+  - Florenc: a late tram 12 (20:19, +4 min) sorted by its expected time; "+1 min" red, "on
+    time" grey; CLI `departures --stop Anděl` prints "(live)" and the delays.
+  - The page's lead and footer still said "not live positions": now they name Golemio.
 
 ## 2026-11-15 (interactive): from a journey's stops to their departures
 
@@ -816,9 +827,8 @@ Mutation checks: without the filter or without the level penalty, one test each 
 
 ## Next steps (in order)
 
-1. Check live delays with a real Golemio key against IDOS's board for the same stop and minute.
-2. Metro platforms at Florenc show no platform on the board: the feed's platform_code is empty
+1. Metro platforms at Florenc show no platform on the board: the feed's platform_code is empty
    there (Anděl has 1 and 2). Name them by direction instead, or leave as the feed says?
-3. Stops without a time in the feed: interpolate by distance (PID has none, so only for other
+2. Stops without a time in the feed: interpolate by distance (PID has none, so only for other
    feeds).
-4. compare-journeys takes ~45 s for 2,000 queries; profile it if it gets run often.
+3. compare-journeys takes ~45 s for 2,000 queries; profile it if it gets run often.

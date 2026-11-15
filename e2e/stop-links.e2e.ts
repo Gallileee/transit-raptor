@@ -40,7 +40,8 @@ test("the planned board switches to now", async ({ page }) => {
   await page.getByRole("link", { name: "Show departures from now" }).click();
   // 07:50 on the clock: the 08:00 departures come first again, and the board refreshes itself.
   await expect(rows(page).first().locator("td").nth(0)).toHaveText("08:00");
-  await expect(page.locator("#updated")).toHaveText("Updated 07:50:00");
+  // The page's clock runs on while the test clicks: a second or two may have passed.
+  await expect(page.locator("#updated")).toHaveText(/^Updated 07:50:0\d$/);
   expect(new URL(page.url()).search).toBe("?stop=Alpha");
 });
 

@@ -27,7 +27,7 @@ test("shows the next departures of the stop in the URL", async ({ page }) => {
   // The metro's colours from routes.txt; the step-free bus says so on its badge.
   await expect(rows(page).nth(4).locator(".badge")).toHaveCSS("background-color", "rgb(0, 165, 98)");
   await expect(rows(page).nth(2).locator(".badge")).toHaveAttribute("title", "bus · step-free");
-  await expect(page.locator("#updated")).toHaveText("Updated 07:58:00");
+  await expect(page.locator("#updated")).toHaveText(/^Updated 07:58:0\d$/); // the clock runs on while the test works
 });
 
 test("counts down, drops what has left, and asks again every 30 s", async ({ page }) => {
@@ -62,7 +62,7 @@ test("keeps counting down while the server doesn't answer", async ({ page }) => 
   await page.clock.runFor(150_000); // 08:01:32: the 08:00 departures have left
   await expect(rows(page)).toHaveCount(3);
   await expect(rows(page).first().locator(".time")).toHaveText("08:05");
-  await expect(page.locator("#updated")).toHaveText("Updated 07:58:00");
+  await expect(page.locator("#updated")).toHaveText(/^Updated 07:58:0\d$/); // the clock runs on while the test works
 });
 
 test("shows live delays and cancellations when the server has them", async ({ page }) => {
@@ -89,12 +89,12 @@ test("shows live delays and cancellations when the server has them", async ({ pa
   ]);
   await expect(rows(page).nth(2)).toHaveClass("canceled");
   await expect(rows(page).nth(1).locator(".delay")).toHaveCSS("font-weight", "600");
-  await expect(page.locator("#updated")).toHaveText("Updated 07:58:00 · live delays from PID");
+  await expect(page.locator("#updated")).toHaveText(/^Updated 07:58:0\d · live delays from PID$/);
 
   // (Which late vehicles stay on the board after their time is the server's work: tests/realtime.)
   live = "error";
   await page.getByRole("button", { name: "Show" }).click();
-  await expect(page.locator("#updated")).toHaveText("Updated 07:58:00 · live delays unavailable, timetable times");
+  await expect(page.locator("#updated")).toHaveText(/^Updated 07:58:0\d · live delays unavailable, timetable times$/);
   await expect(page.locator(".delay")).toHaveCount(0);
 });
 
