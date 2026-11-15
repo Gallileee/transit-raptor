@@ -16,6 +16,8 @@ const drawn = L.layerGroup().addTo(map);
 
 let journeys = [];
 let stepFree = false;
+/** The date of the journeys shown (YYYY-MM-DD), for links to the departures board. */
+let searchDate;
 /** The timetable in use: { firstDate, lastDate, loadedAt } from the API. */
 let feed;
 
@@ -103,6 +105,7 @@ async function search() {
   }
   journeys = body.journeys;
   stepFree = body.stepFree;
+  searchDate = body.date;
   showFeed(body.feed);
   const ms = Math.round(performance.now() - started);
   if (journeys.length === 0) {
@@ -261,7 +264,9 @@ function journeyItem(journey, index) {
       if (color(leg.textColor)) badge.style.color = color(leg.textColor);
       row.append(badge);
       const towards = leg.headsign ? ` towards ${leg.headsign}` : "";
-      const text = el("span", "", `${stopName(leg.from)} → ${stopName(leg.to)}, ${leg.arrival}${towards}`);
+      // Where one gets on links to that stop's departures at that time: the other ways to go.
+      const text = el("span");
+      text.append(boardLink(leg.from, leg.departure), ` → ${stopName(leg.to)}, ${leg.arrival}${towards}`);
       // In a step-free search, say where the feed doesn't confirm access (it never shows "no").
       if (stepFree && leg.access === "unknown") text.append(el("span", "unconfirmed", " · step-free access not confirmed"));
       if (leg.access === "yes") badge.title += " · step-free";
@@ -274,12 +279,43 @@ function journeyItem(journey, index) {
 
   item.addEventListener("click", () => select(index));
   item.addEventListener("keydown", (event) => {
+    if (event.target !== item) return; // Enter on a link inside follows the link
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
       select(index);
     }
   });
   return item;
+}
+
+/**
+ * The departures board of a stop at a time of the journey: "08:05" on the search date, or
+ * "00:10 (+1)" the day after (a journey past midnight).
+ */
+function boardUrl(stop, time) {
+  const [, clock, days = "0"] = /^(\d{1,2}:\d{2})(?: \(([+-]?\d+)\))?$/.exec(time) ?? [];
+  if (!clock || !searchDate) return `/departures?${new URLSearchParams({ stop: stop.name })}`;
+  const [y, m, d] = searchDate.split("-").map(Number);
+  const date = new Date(y, m - 1, d + Number(days));
+  const iso = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  return `/departures?${new URLSearchParams({ stop: stop.name, date: iso, time: clock })}`;
+}
+
+function boardLink(stop, time) {
+  const link = el("a", "stop-link", stopName(stop));
+  link.href = boardUrl(stop, time);
+  link.title = `Departures from ${stop.name} at ${time}`;
+  return link;
+}
+
+/** A dot's popup on the map: the stop, its time, and a link to its departures. */
+function dotPopup(stop, time) {
+  const box = el("div", "dot-popup");
+  box.append(el("strong", "", `${time} ${stopName(stop)}`), el("br"));
+  const link = el("a", "", "Departures from here");
+  link.href = boardUrl(stop, time);
+  box.append(link);
+  return box;
 }
 
 /** "3 stops in between", opened to list them with their times. */
@@ -331,6 +367,7 @@ function draw(journey) {
     // stops themselves: a line drawn along the street may start a few metres beside the stop.
     L.circleMarker([leg.from.lat, leg.from.lon], { radius: i === 0 ? 7 : 5, color: "#1c2430", weight: 2, fillColor: "#fff", fillOpacity: 1 })
       .bindTooltip(`${leg.departure} ${stopName(leg.from)}`)
+      .bindPopup(dotPopup(leg.from, leg.departure))
       .addTo(drawn);
   });
   // The layout may have changed since the map was created (results appearing, a rotated phone);
@@ -339,6 +376,7 @@ function draw(journey) {
   const last = journey.legs[journey.legs.length - 1];
   L.circleMarker([last.to.lat, last.to.lon], { radius: 7, color: "#1c2430", weight: 2, fillColor: "#1c2430", fillOpacity: 1 })
     .bindTooltip(`${last.arrival} ${stopName(last.to)}`)
+    .bindPopup(dotPopup(last.to, last.arrival))
     .addTo(drawn);
   map.fitBounds(bounds, { padding: [30, 30] });
 }

@@ -217,6 +217,9 @@ keeps the two most recently used dates in memory, and serves:
   every 30 s while the tab is visible and counts the minutes down on the device's clock in
   between, so departures that have left drop off even if the server doesn't answer. The times
   are the timetable's: no live delays (PID publishes those through a separate, keyed API).
+  `&date=&time=` shows the board for that moment instead, and it stays as it is. In a journey,
+  the stop where one gets on links there at that time (the other ways to go from it), and so
+  do the dots on the map, in a popup.
 - `GET /api/departures?stop=NAME[&date=][&time=HH:MM][&limit=20][&window=120]`: the next
   departures, from the timetable's patterns (binary search for each pattern's first trip):
   trips that let people on there and go on, so a trip ending at the stop isn't listed.
@@ -274,7 +277,9 @@ step-free checkbox, line colours from the feed, durations that match the times s
 timetable in the footer (in use, ended, and replaced by a reload), phone width and dark mode.
 `e2e/departures.e2e.ts` does the same for the departures board, with the browser's clock under
 the test's control: the board, the countdown and the refresh every 30 s, departures dropping off
-while the server doesn't answer, an ambiguous stop, and the links between the pages. It runs without the internet: Leaflet is served from `node_modules`
+while the server doesn't answer, an ambiguous stop, and the links between the pages.
+`e2e/stop-links.e2e.ts`: from a journey's stop (list and map popup, by click and by Enter) to
+the board at that time, which doesn't refresh, and back to now; the next day after midnight. It runs without the internet: Leaflet is served from `node_modules`
 (the page's integrity hashes prove it is the cdnjs file), map tiles are a blank image, and any
 other outside request, console error or exception fails the test. CI runs it as its own job
 and keeps the report and traces when it fails.

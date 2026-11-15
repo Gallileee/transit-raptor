@@ -1,5 +1,29 @@
 # Progress log
 
+## 2026-11-15 (interactive): from a journey's stops to their departures
+
+Why: next step 2, picked by the user. The journey planner and the departures board were two
+separate pages; at a stop of a journey the natural next question is "what else leaves here then".
+
+Done:
+- The board takes `?stop=&date=&time=`: the board for that moment, counted from it, not
+  refreshed, with "Timetable for 16 Nov 2026 at 08:12 · Show departures from now".
+- In a journey, the stop where each ride starts links to its board at the ride's departure
+  (`a.stop-link`, dotted until pointed at). Enter on the link follows it (the journey's own
+  Enter handler now only reacts to the journey itself).
+- The dots on the map (each leg's start, the end) open a popup: time, stop, "Departures from
+  here". Leaflet's popups are white in both themes, so their text has fixed dark colours.
+- Times past midnight ("00:30 (+1)") link to the next day's board.
+- Tests: `e2e/stop-links.e2e.ts` (5). 204 unit, 30 browser tests.
+
+Verified:
+- Mutations, 10 of 10 caught (no Enter guard, no day added after midnight, no popup, no link,
+  no search date, the planned board counting from now, refreshing, not refreshing from now,
+  "Show departures from now" keeping the moment, the URL's moment ignored).
+- Real feed: Anděl -> Letňany, 16 Nov 08:00: "Florenc" links to the board at 08:12, which lists
+  metro C to Letňany at 08:12 (the journey's train) with the other departures; the map popup
+  at Florenc reads "08:07 Florenc / Departures from here", dark on white in dark mode.
+
 ## 2026-11-15 (interactive): a departures board
 
 Why: picked by the user ("Live departures board"). The planner answered "how do I get to X";
@@ -758,7 +782,8 @@ Mutation checks: without the filter or without the level penalty, one test each 
 
 1. Live delays on the departures board from PID's real-time API (golemio.cz; needs an API key,
    so the key must stay out of the repository and the page).
-2. Click a stop on the journey map or in a journey to open its departures board.
+2. Metro platforms at Florenc show no platform on the board: the feed's platform_code is empty
+   there (Anděl has 1 and 2). Name them by direction instead, or leave as the feed says?
 3. Stops without a time in the feed: interpolate by distance (PID has none, so only for other
    feeds).
 4. compare-journeys takes ~45 s for 2,000 queries; profile it if it gets run often.
