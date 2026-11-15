@@ -1,5 +1,32 @@
 # Progress log
 
+## 2026-11-15 (interactive): metro platforms the feed leaves without a code
+
+Why: next step 2, picked by the user. On the board, Florenc's metro departures had an empty
+Platform column (Anděl's had 1 and 2).
+
+Found (PID feed, 16 Nov): stops with departures and no platform_code are 14 metro platforms
+(Muzeum A and C, Můstek A and B, Florenc B and C, Nádraží Veleslavín) and 734 train stops
+(trains get their track on the day). Metro platforms have boarding areas (location_type 4)
+named "Kolej 1", "Kolej 2 - Start" and so on. Where a platform has both, the code equals that
+track number at 106 of 108 platforms; Vysočanská has them crossed (code 2, areas "Kolej 1").
+
+Done:
+- `compileFeed`: a platform without a code takes the track number its boarding areas all name
+  (`tracksFromAreas`); a code the feed gives is kept; areas naming different tracks, or none,
+  leave it empty. Cache FORMAT 3 (the old cache is read once more from CSV and rewritten).
+- Tests: `platform-codes.test.ts` (4, on a copy of the test feed with named areas).
+  227 unit tests.
+
+Verified:
+- All 14 platforms get a code. Against IDOS's departures, 16 Nov 08:00: Florenc metro B Zličín
+  M1B / Černý Most M2B, C Letňany M1C / Háje M2C; Muzeum A Depo Hostivař and Skalka M1A, Nemocnice
+  Motol and Petřiny M2A, C Letňany M1C, Háje M2C: the same numbers on our board. Můstek and
+  Nádraží Veleslavín follow the same rule (A towards Depo Hostivař 1, B towards Zličín 1).
+- compare-journeys against main: 1,000 of 1,000 journeys identical.
+- Mutations, 3 of 3 caught (no "all agree" check, overwriting the feed's codes, accepting areas
+  not named after a track).
+
 ## 2026-11-15 (interactive): live delays in journeys
 
 Why: picked by the user. The departures board had live delays; a planned journey didn't say
@@ -859,8 +886,7 @@ Mutation checks: without the filter or without the level penalty, one test each 
 
 1. Plan around a change at risk: offer the next journey that doesn't rely on it (search again
    from the late vehicle's expected arrival).
-2. Metro platforms at Florenc show no platform on the board: the feed's platform_code is empty
-   there (Anděl has 1 and 2). Name them by direction instead, or leave as the feed says?
+2. Trains' platforms on the board from Golemio (it reports the track a train stops at).
 3. Stops without a time in the feed: interpolate by distance (PID has none, so only for other
    feeds).
 4. compare-journeys takes ~45 s for 2,000 queries; profile it if it gets run often.
