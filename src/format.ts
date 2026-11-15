@@ -36,7 +36,7 @@ export function formatLeg(feed: Feed, leg: Leg, timetable?: Timetable): string {
       from.name === to.name && !from.platform && !to.platform
         ? `change platforms at ${from.name}`
         : `${stopLabel(feed, leg.from)} -> ${stopLabel(feed, leg.to)}`;
-    const street = timetable && viaStreet(timetable, leg.from, leg.to) ? ", out via the street" : "";
+    const street = timetable && viaStreet(timetable, leg.from, leg.to) ? ", out one entrance and in another" : "";
     return `  ${span}  walk ${Math.max(1, minutesBetween(leg.departure, leg.arrival))} min: ${where}${street}`;
   }
   const route = feed.routes.get(leg.routeId);

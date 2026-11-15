@@ -250,8 +250,9 @@ function journeyItem(journey, index) {
         leg.from.name === leg.to.name && !leg.from.platform && !leg.to.platform
           ? `change platforms at ${leg.from.name}`
           : `${stopName(leg.from)} → ${stopName(leg.to)}`;
-      // Step-free at Muzeum: up one lift to the street, along it, and down another.
-      const street = leg.street ? ", out via the street" : "";
+      // Muzeum step-free: up one lift to the street and down another. Hlavní nádraží: out of one
+      // side platform's gates and into the other's, through the shared vestibule.
+      const street = leg.street ? ", out one entrance and in another" : "";
       row.append(el("span", "", `${leg.minutes} min: ${where}${street}`));
     } else {
       const badge = el("span", "badge", leg.line);

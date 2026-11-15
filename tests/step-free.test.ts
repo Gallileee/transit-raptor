@@ -268,7 +268,7 @@ describe("step-free in the API and the CLI", () => {
     const gamma = ["plan", "--gtfs", MINI, "--from", "alpha", "--to", "echo", "--time", "08:55", "--window", "0", "--no-cache"];
     expect(await main([...gamma, "--step-free"], io)).toBe(0);
     const walks = () => out.flatMap((block) => block.split("\n")).filter((l) => l.includes(" walk "));
-    expect(walks()).toEqual(["  09:10–09:17  walk 7 min: change platforms at Gamma, out via the street"]);
+    expect(walks()).toEqual(["  09:10–09:17  walk 7 min: change platforms at Gamma, out one entrance and in another"]);
     out.length = 0;
     expect(await main(gamma, io)).toBe(0);
     expect(walks()).toEqual([expect.stringMatching(/walk \d+ min: change platforms at Gamma$/)]);
