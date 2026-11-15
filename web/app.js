@@ -18,6 +18,8 @@ let journeys = [];
 let stepFree = false;
 /** The date of the journeys shown (YYYY-MM-DD), for links to the departures board. */
 let searchDate;
+/** Where the journeys shown go (the API's name), for searching on from a missed change. */
+let destination;
 /** The timetable in use: { firstDate, lastDate, loadedAt } from the API. */
 let feed;
 
@@ -106,6 +108,7 @@ async function search() {
   journeys = body.journeys;
   stepFree = body.stepFree;
   searchDate = body.date;
+  destination = body.to;
   showFeed(body.feed);
   const ms = Math.round(performance.now() - started);
   if (journeys.length === 0) {
@@ -280,6 +283,7 @@ function journeyItem(journey, index) {
       row.append(text);
       if (leg.canceled) row.append(el("span", "risk", `${leg.mode} ${leg.line} at ${leg.departure} is canceled`));
       else if (leg.changeAtRisk) row.append(el("span", "risk", "The vehicle before is late: this change may be missed"));
+      if (journey.fallback?.leg === journey.legs.indexOf(leg)) row.append(fallbackLine(journey.fallback));
       if (leg.passed.length > 0) row.append(passedList(leg.passed));
     }
     legs.append(row);
@@ -298,16 +302,50 @@ function journeyItem(journey, index) {
 }
 
 /**
- * The departures board of a stop at a time of the journey: "08:05" on the search date, or
- * "00:10 (+1)" the day after (a journey past midnight).
+ * A time of the journey as a date and a clock: "08:05" on the search date, or "00:10 (+1)" the
+ * day after (a journey past midnight). Undefined when it can't be read.
  */
-function boardUrl(stop, time) {
+function dateAndClock(time) {
   const [, clock, days = "0"] = /^(\d{1,2}:\d{2})(?: \(([+-]?\d+)\))?$/.exec(time) ?? [];
-  if (!clock || !searchDate) return `/departures?${new URLSearchParams({ stop: stop.name })}`;
+  if (!clock || !searchDate) return undefined;
   const [y, m, d] = searchDate.split("-").map(Number);
   const date = new Date(y, m - 1, d + Number(days));
-  const iso = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-  return `/departures?${new URLSearchParams({ stop: stop.name, date: iso, time: clock })}`;
+  return { date: `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`, time: clock };
+}
+
+/** The departures board of a stop at a time of the journey. */
+function boardUrl(stop, time) {
+  const at = dateAndClock(time);
+  return `/departures?${new URLSearchParams(at ? { stop: stop.name, ...at } : { stop: stop.name })}`;
+}
+
+/**
+ * Under a change at risk: how to go on if it is missed, from where the late vehicle leaves one,
+ * with a link that searches from there.
+ */
+function fallbackLine(fallback) {
+  const box = el("span", "fallback");
+  const rides = fallback.journey?.legs.filter((l) => l.kind === "ride") ?? [];
+  if (!fallback.journey) {
+    box.append(`If you miss it: nothing more from ${stopName(fallback.from)} today. `);
+  } else if (rides.length === 0) {
+    box.append(`If you miss it: walk from ${stopName(fallback.from)}, arriving ${fallback.journey.arrival}. `);
+  } else {
+    const how = rides.map((r) => `${r.mode} ${r.line} at ${r.departure} from ${stopName(r.from)}`).join(", then ");
+    const later = fallback.later > 0 ? ` (${fallback.later} min later)` : "";
+    box.append(`If you miss it: ${how}, arriving ${fallback.journey.arrival}${later}. `);
+  }
+  // From when the journey found leaves: searching from the stop's name at the time one gets off
+  // would offer the vehicle that may be gone again, from the stop's other platforms.
+  const at = dateAndClock(fallback.journey?.departure ?? fallback.at);
+  if (at && destination) {
+    const query = new URLSearchParams({ from: fallback.from.name, to: destination, ...at, window: "0" });
+    if (stepFree) query.set("stepFree", "1");
+    const link = el("a", "", "Search from there");
+    link.href = `/?${query}`;
+    box.append(link);
+  }
+  return box;
 }
 
 function boardLink(stop, time) {

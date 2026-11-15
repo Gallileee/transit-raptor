@@ -63,3 +63,45 @@ test("says when the live delays aren't available, and nothing when they are off"
   await expect(page.getByRole("status")).toHaveText(/2 journeys \(\d+ ms\)$/);
   await expect(page.locator(".delay, .risk")).toHaveCount(0);
 });
+
+test("says how to go on if a change at risk is missed, and searches from there", async ({ page }) => {
+  await answerWith(page, (body) => {
+    if (body.from !== "Alpha") return; // the search from Bravo is answered as it is
+    body.live = "on";
+    const viaBravo = body.journeys[1];
+    viaBravo.legs[0].delay = 150;
+    viaBravo.legs[2].changeAtRisk = true;
+    viaBravo.fallback = {
+      leg: 2,
+      from: viaBravo.legs[0].to,
+      at: "08:07",
+      journey: {
+        departure: "08:16",
+        arrival: "08:25",
+        minutes: 9,
+        transfers: 0,
+        legs: [{ ...viaBravo.legs[2], departure: "08:18", arrival: "08:25", delay: null, changeAtRisk: false }],
+      },
+      later: 10,
+    };
+  });
+  await page.goto(search);
+  const viaBravo = journeys(page).nth(1);
+  const fallback = viaBravo.locator(".leg").nth(2).locator(".fallback");
+  await expect(fallback).toHaveText("If you miss it: bus 200 at 08:18 from Bravo (2), arriving 08:25 (10 min later). Search from there");
+  await expect(page.locator(".fallback")).toHaveCount(1);
+  await fallback.getByRole("link", { name: "Search from there" }).click();
+  await expect(page).toHaveURL(/\?from=Bravo&to=Delta%2C\+N%C3%A1m%C4%9Bst%C3%AD&date=2026-11-10&time=08%3A16&window=0$/);
+  await expect(page.getByRole("status")).toContainText("1 journey");
+  await expect(journeys(page).first().locator("h2")).toContainText("08:18 → 08:25");
+});
+
+test("says when nothing goes on from where the late vehicle leaves one", async ({ page }) => {
+  await answerWith(page, (body) => {
+    body.live = "on";
+    body.journeys[1].legs[2].changeAtRisk = true;
+    body.journeys[1].fallback = { leg: 2, from: body.journeys[1].legs[0].to, at: "08:30", journey: null, later: null };
+  });
+  await page.goto(search);
+  await expect(page.locator(".fallback")).toHaveText("If you miss it: nothing more from Bravo (1) today. Search from there");
+});

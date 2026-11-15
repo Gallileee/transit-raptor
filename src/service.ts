@@ -149,6 +149,25 @@ export interface JourneyJson {
   minutes: number;
   transfers: number;
   legs: LegJson[];
+  /** Live, only when a change is at risk: how to go on if it is missed. */
+  fallback?: FallbackJson;
+}
+
+/**
+ * If the change at risk is missed: the journey on from where the late vehicle leaves one, when
+ * it is expected there (its delay as it is now), to the same destination.
+ */
+export interface FallbackJson {
+  /** The index in `legs` of the ride whose change is at risk (the first one, if several are). */
+  leg: number;
+  /** Where one gets off the late vehicle... */
+  from: StopJson;
+  /** ...and when, with its delay. */
+  at: string;
+  /** The journey that arrives first from there, or null when there is none (the last one gone). */
+  journey: JourneyJson | null;
+  /** How many minutes later than planned it arrives, or null without a journey. */
+  later: number | null;
 }
 
 export interface PlanRequest {
@@ -532,7 +551,11 @@ export class Planner {
       date: formatDate(date),
       time: formatClock(departAt),
       stepFree,
-      journeys: journeys.map((j) => journeyJson(loaded, j, timetable, known)),
+      journeys: journeys.map((j) => {
+        const json = journeyJson(loaded, j, timetable, known);
+        const fallback = fallbackFor(loaded, j, json, timetable, known, to.stops, maxTransfers);
+        return fallback ? { ...json, fallback } : json;
+      }),
       live: state,
       feed: loaded.info,
     };
@@ -612,6 +635,38 @@ export function journeyJson(
     minutes: minutesBetween(journey.departure, journey.arrival),
     transfers: journey.transfers,
     legs: journey.legs.map((leg, i) => legJson(loaded, leg, timetable, known(leg), atRisk[i]!)),
+  };
+}
+
+/**
+ * For a journey with a change at risk: search again from where the vehicle before it leaves
+ * one, from when it is expected there, so the vehicle that may be gone isn't counted on (it
+ * leaves, as late as it is, before one can be at it).
+ */
+export function fallbackFor(
+  loaded: Loaded,
+  journey: Journey,
+  json: JourneyJson,
+  timetable: Timetable,
+  live: ReadonlyMap<string, LiveDeparture>,
+  to: number[],
+  maxTransfers: number,
+): FallbackJson | undefined {
+  const leg = json.legs.findIndex((l) => l.kind === "ride" && l.changeAtRisk && !l.canceled);
+  if (leg < 0) return undefined;
+  let i = leg - 1;
+  while (journey.legs[i]!.kind !== "ride") i--;
+  const before = journey.legs[i]!;
+  const late = json.legs[i]!;
+  const departAt = before.arrival + (late.kind === "ride" ? (late.delay ?? 0) : 0);
+  // Of the journeys from there (fewer changes, or earlier), the one that arrives first.
+  const best = plan(timetable, { from: [before.to], to, departAt, maxTransfers }).at(-1);
+  return {
+    leg,
+    from: stopJson(loaded.feed, before.to),
+    at: formatClock(departAt),
+    journey: best ? journeyJson(loaded, best, timetable, live) : null,
+    later: best ? minutesBetween(journey.arrival, best.arrival) : null,
   };
 }
 
