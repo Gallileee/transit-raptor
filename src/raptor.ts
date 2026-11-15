@@ -78,9 +78,15 @@ const ORIGIN = 1;
 const RIDE = 2;
 const WALK = 3;
 
-/** How a stop was reached in one round, for walking the journey back afterwards. */
+/**
+ * How a stop was reached in one round, for walking the journey back afterwards. A walk can
+ * improve a stop a vehicle reached in the same round; the vehicle's label (`rideArrival`,
+ * `pattern`, ...) stays, because walks that start there start from the vehicle.
+ */
 interface Labels {
   arrival: Float64Array;
+  /** When the vehicle of this round got there (Infinity if none did). */
+  rideArrival: Float64Array;
   kind: Uint8Array;
   pattern: Int32Array;
   trip: Int32Array;
@@ -92,6 +98,7 @@ interface Labels {
 function labels(n: number): Labels {
   return {
     arrival: new Float64Array(n).fill(Infinity),
+    rideArrival: new Float64Array(n).fill(Infinity),
     kind: new Uint8Array(n),
     pattern: new Int32Array(n).fill(-1),
     trip: new Int32Array(n).fill(-1),
@@ -194,6 +201,7 @@ export class Search {
             const t = arrival(pattern, trip, i);
             if (t < current.arrival[stop]! && t < targetBound) {
               current.arrival[stop] = t;
+              current.rideArrival[stop] = t;
               current.kind[stop] = RIDE;
               current.pattern[stop] = p;
               current.trip[stop] = trip;
@@ -215,10 +223,11 @@ export class Search {
         }
       }
 
-      // 3. Walk from the stops a vehicle improved (one walk at a time, not chains of walks).
+      // 3. Walk from the stops a vehicle improved (one walk at a time, not chains of walks): from
+      // when the vehicle got there, even if a walk below gets there sooner.
       for (const stop of [...marked]) {
         for (const { to, seconds } of tt.footpaths[stop]!) {
-          const t = current.arrival[stop]! + seconds;
+          const t = current.rideArrival[stop]! + seconds;
           if (t < current.arrival[to]! && t < targetBound) {
             current.arrival[to] = t;
             current.kind[to] = WALK;
@@ -339,9 +348,11 @@ function reconstruct(tt: Timetable, rounds: Labels[], round: number, target: num
   const legs: Leg[] = [];
   let k = round;
   let stop = target;
+  let walkedFrom = false; // the stop is where a walk of round k started (by vehicle, unless round 0)
   for (;;) {
     const l = rounds[k]!;
-    const kind = l.kind[stop]!;
+    const kind = walkedFrom && l.rideArrival[stop]! < Infinity ? RIDE : l.kind[stop]!;
+    walkedFrom = false;
     if (kind === NONE) {
       k--; // reached in an earlier round and carried over
       continue;
@@ -349,9 +360,11 @@ function reconstruct(tt: Timetable, rounds: Labels[], round: number, target: num
     if (kind === ORIGIN) break;
     if (kind === WALK) {
       const from = l.walkFrom[stop]!;
-      const fromArrival = l.arrival[from]!;
+      // Round 0 walks start at the origin; later ones where a vehicle of the round arrived.
+      const fromArrival = k === 0 ? l.arrival[from]! : l.rideArrival[from]!;
       legs.push({ kind: "walk", from, to: stop, departure: fromArrival, arrival: l.arrival[stop]! });
       stop = from;
+      walkedFrom = true;
       continue;
     }
     const pattern = tt.patterns[l.pattern[stop]!]!;
