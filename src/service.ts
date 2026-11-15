@@ -5,10 +5,10 @@
 import { fingerprint, type OpenedFeed, openFeed } from "./cache.js";
 import { type Access, coveredDates, type Feed, feedForDate } from "./gtfs.js";
 import { earliestTrip, type Journey, type Leg, plan, profile } from "./raptor.js";
-import { type LiveDeparture, liveKey, type Realtime, RealtimeError } from "./realtime.js";
+import { type LiveDeparture, type LiveQuery, liveKey, type Realtime, RealtimeError } from "./realtime.js";
 import { cut, type LatLon, type Shapes } from "./shapes.js";
 import { StopIndex, type StopMatch } from "./stops.js";
-import { formatClock, formatDate, minutesBetween, parseClock, parseDate, type ServiceDate } from "./time.js";
+import { DAY, formatClock, formatDate, minutesBetween, parseClock, parseDate, type ServiceDate } from "./time.js";
 import { buildTimetable, departure as departureAt, type Timetable, viaStreet } from "./timetable.js";
 
 /** Something the caller got wrong (an unknown stop, a malformed time): HTTP 400, not 500. */
@@ -116,6 +116,17 @@ export type LegJson =
        * for dots on the map. Stops it only passes (no pickup and no drop-off) aren't listed.
        */
       passed: PassedStop[];
+      /**
+       * Live, for a ride leaving within the next hour: seconds late where one gets on (negative:
+       * early), or null when not known.
+       */
+      delay: number | null;
+      canceled: boolean;
+      /**
+       * Live: the vehicle before is late enough that this one may leave first (its delay, taken
+       * to last to where one gets off, eats the time the change allows).
+       */
+      changeAtRisk: boolean;
     }
   | {
       kind: "walk";
@@ -160,6 +171,8 @@ export interface PlanResponse {
   time: string;
   stepFree: boolean;
   journeys: JourneyJson[];
+  /** Live delays on the rides of the next hour: as for departure boards. */
+  live: "on" | "off" | "error";
   /** The timetable that answered: after a reload the page sees the new one. */
   feed: FeedInfo;
 }
@@ -216,6 +229,8 @@ const LIVE_WITHIN = 5 * 60;
  * before now is still to come. (Golemio keeps 30 minutes of the past.)
  */
 const LATE_LOOKBACK = 15 * 60;
+/** Rides of a journey get live delays when they leave this soon (vehicles not yet out don't report). */
+const JOURNEY_HORIZON = 60 * 60;
 
 /** What `checkForNewFeed` did. */
 export type ReloadResult = "unchanged" | "waiting" | "reloaded" | "failed" | "busy";
@@ -440,19 +455,23 @@ export class Planner {
   }
 
   /** Live delays for a board. Never throws for the source failing. */
-  private async liveFor(realtime: Realtime, date: ServiceDate, from: number, window: number, limit: number, stopIds: string[]) {
+  private liveFor(realtime: Realtime, date: ServiceDate, from: number, window: number, limit: number, stopIds: string[]) {
+    return this.ask(realtime, {
+      stopIds,
+      from: `${formatDate(date)}T${formatClock(from).slice(0, 5)}:00`,
+      before: LATE_LOOKBACK / 60,
+      minutes: window,
+      // Golemio counts departures over all the platforms, and may order them a little
+      // differently: ask for more than are shown.
+      limit: Math.min(1000, limit * 3 + 30),
+    });
+  }
+
+  /** Ask the live source; a failure gives no delays (logged at most once a minute), not an error. */
+  private async ask(realtime: Realtime, query: LiveQuery) {
     const now = this.now();
-    const clock = formatClock(from).slice(0, 5);
     try {
-      const known = await realtime.departures({
-        stopIds,
-        from: `${formatDate(date)}T${clock}:00`,
-        before: LATE_LOOKBACK / 60,
-        minutes: window,
-        // Golemio counts departures over all the platforms, and may order them a little
-        // differently: ask for more than are shown.
-        limit: Math.min(1000, limit * 3 + 30),
-      });
+      const known = await realtime.departures(query);
       return { known, state: "on" as const };
     } catch (e) {
       if (!(e instanceof RealtimeError)) throw e;
@@ -484,15 +503,43 @@ export class Planner {
     const stepFree = request.stepFree === true;
     const timetable = stepFree ? loaded.stepFreeTimetable() : loaded.timetable;
     const journeys = request.list ? profile(timetable, query) : plan(timetable, query);
+    const { known, state } = await this.liveForJourneys(date, journeys, loaded.feed);
     return {
       from: from.name,
       to: to.name,
       date: formatDate(date),
       time: formatClock(departAt),
       stepFree,
-      journeys: journeys.map((j) => journeyJson(loaded, j, timetable)),
+      journeys: journeys.map((j) => journeyJson(loaded, j, timetable, known)),
+      live: state,
       feed: loaded.info,
     };
+  }
+
+  /**
+   * Live delays for the rides of these journeys that leave within the next hour: one question
+   * for all the stops where they get on.
+   */
+  private async liveForJourneys(date: ServiceDate, journeys: Journey[], feed: Feed) {
+    const none = { known: new Map<string, LiveDeparture>(), state: "off" as const };
+    if (!this.realtime) return none;
+    const now = this.now();
+    const midnight = new Date(date.year, date.month - 1, date.day).getTime();
+    const nowSeconds = Math.floor((now.getTime() - midnight) / 1000);
+    if (nowSeconds < 0 || nowSeconds >= DAY) return none; // a journey on another day
+    const soon = journeys
+      .flatMap((j) => j.legs)
+      .filter((l) => l.kind === "ride" && l.departure >= nowSeconds - LIVE_WITHIN && l.departure <= nowSeconds + JOURNEY_HORIZON);
+    if (soon.length === 0) return none;
+    const stopIds = [...new Set(soon.map((l) => feed.stops[l.from]!.id))];
+    const minute = nowSeconds - (nowSeconds % 60);
+    return this.ask(this.realtime, {
+      stopIds,
+      from: `${formatDate(date)}T${formatClock(minute)}:00`,
+      before: LIVE_WITHIN / 60,
+      minutes: JOURNEY_HORIZON / 60 + 1,
+      limit: 1000,
+    });
   }
 }
 
@@ -514,17 +561,45 @@ function point(feed: Feed, index: number): LatLon {
   return [s.lat, s.lon];
 }
 
-export function journeyJson(loaded: Loaded, journey: Journey, timetable: Timetable = loaded.timetable): JourneyJson {
+export function journeyJson(
+  loaded: Loaded,
+  journey: Journey,
+  timetable: Timetable = loaded.timetable,
+  live: ReadonlyMap<string, LiveDeparture> = new Map(),
+): JourneyJson {
+  const { feed } = loaded;
+  const known = (leg: Leg) => (leg.kind === "ride" ? live.get(liveKey(leg.tripId, feed.stops[leg.from]!.id)) : undefined);
+  // A change is at risk when the vehicle before, as late as it is now, arrives after this one
+  // leaves (as late or early as this one is, if known), counting the walk between them.
+  let before: { arrival: number; delay: number | null } | undefined;
+  let walking = 0;
+  const atRisk = journey.legs.map((leg) => {
+    if (leg.kind === "walk") {
+      walking += leg.arrival - leg.departure;
+      return false;
+    }
+    const delay = known(leg)?.delay ?? null;
+    const risk = before?.delay != null && before.arrival + before.delay + walking > leg.departure + (delay ?? 0);
+    before = { arrival: leg.arrival, delay };
+    walking = 0;
+    return risk;
+  });
   return {
     departure: formatClock(journey.departure),
     arrival: formatClock(journey.arrival),
     minutes: minutesBetween(journey.departure, journey.arrival),
     transfers: journey.transfers,
-    legs: journey.legs.map((leg) => legJson(loaded, leg, timetable)),
+    legs: journey.legs.map((leg, i) => legJson(loaded, leg, timetable, known(leg), atRisk[i]!)),
   };
 }
 
-function legJson({ feed, tripById, shapes }: Loaded, leg: Leg, timetable: Timetable): LegJson {
+function legJson(
+  { feed, tripById, shapes }: Loaded,
+  leg: Leg,
+  timetable: Timetable,
+  live: LiveDeparture | undefined,
+  changeAtRisk: boolean,
+): LegJson {
   const times = { departure: formatClock(leg.departure), arrival: formatClock(leg.arrival) };
   if (leg.kind === "walk") {
     return {
@@ -572,6 +647,9 @@ function legJson({ feed, tripById, shapes }: Loaded, leg: Leg, timetable: Timeta
     path: shaped ?? path,
     shape: shaped !== undefined,
     passed,
+    delay: live?.delay ?? null,
+    canceled: live?.canceled ?? false,
+    changeAtRisk,
   };
 }
 

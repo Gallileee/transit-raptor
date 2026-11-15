@@ -1,5 +1,35 @@
 # Progress log
 
+## 2026-11-15 (interactive): live delays in journeys
+
+Why: picked by the user. The departures board had live delays; a planned journey didn't say
+that its first bus is 4 minutes late, or that the change it relies on may be missed.
+
+Done:
+- `Planner.plan()`: the rides of all the journeys found that leave within the next hour (from
+  5 min ago) get Golemio's delay at the stop where one gets on: one question for all those stops
+  (`liveForJourneys`; the board and the journeys share `ask()`: errors give no delays, logged at
+  most once a minute). Not on another day than the journey's (after midnight, the previous
+  day's night journeys get none).
+- `journeyJson`: per ride `delay`, `canceled`, `changeAtRisk`. A change is at risk when the
+  ride before, as late as it is now (taken to last to where one gets off), plus the walks
+  between, arrives after this ride leaves with its own delay; an early ride counts as early
+  (first version ignored early departures; it makes a change harder, so now it counts). Only
+  the walks of that change count, not earlier ones.
+- Page: "+3 min" / "on time" under a ride's time, a red line "The vehicle before is late: this
+  change may be missed" or "bus 300 at 08:05 is canceled", "· live delays from PID" in the
+  status line.
+- Tests: `journey-delays.test.ts` (7), `e2e/journey-delays.e2e.ts` (3). 223 unit, 34 browser
+  tests.
+
+Verified:
+- Mutations, 13 of 13 caught (5 first missed; tests added, and the early-departure bug found).
+- With the user's key, Sunday 15 Nov 20:31: 5 journeys (Anděl -> Letňany, Palmovka -> Karlovo
+  náměstí, Kobylisy -> Náměstí Míru, Sídliště Barrandov -> Palmovka, Dejvická -> Spořilov),
+  11 rides: every delay equal to Golemio's raw departure board for the same stop, line and time
+  (0 to 149 s; a tram not yet out: null and "n/a"). No change was at risk that evening; the
+  page showed "on time" under each ride and "live delays from PID".
+
 ## 2026-11-15 (interactive): live delays on the departures board
 
 Why: next step 1, picked by the user. The board showed timetable times; IDOS shows the delay
@@ -827,8 +857,10 @@ Mutation checks: without the filter or without the level penalty, one test each 
 
 ## Next steps (in order)
 
-1. Metro platforms at Florenc show no platform on the board: the feed's platform_code is empty
+1. Plan around a change at risk: offer the next journey that doesn't rely on it (search again
+   from the late vehicle's expected arrival).
+2. Metro platforms at Florenc show no platform on the board: the feed's platform_code is empty
    there (Anděl has 1 and 2). Name them by direction instead, or leave as the feed says?
-2. Stops without a time in the feed: interpolate by distance (PID has none, so only for other
+3. Stops without a time in the feed: interpolate by distance (PID has none, so only for other
    feeds).
-3. compare-journeys takes ~45 s for 2,000 queries; profile it if it gets run often.
+4. compare-journeys takes ~45 s for 2,000 queries; profile it if it gets run often.
