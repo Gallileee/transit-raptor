@@ -222,7 +222,10 @@ function buildFootpaths(feed: Feed, walk: WalkOptions, station: StationOptions, 
       if (t.street) street[t.from]!.add(t.to);
     }
   } else {
-    for (const t of inside) best[t.from]!.set(t.to, t.seconds);
+    for (const t of inside) {
+      best[t.from]!.set(t.to, t.seconds);
+      if (t.street) street[t.from]!.add(t.to);
+    }
   }
   for (const t of feed.transfers) {
     if (t.from === t.to) continue;

@@ -8,6 +8,9 @@
  *
  * A change between two platforms is the shortest path through that graph (Dijkstra), and one
  * from a platform to a stop on the street goes out through the best entrance and then walks.
+ * The graph also walks along the street from each entrance to the station's other entrances,
+ * so a path may leave by one and come back in by another (Muzeum A <-> C step-free, Hlavní
+ * nádraží between its tracks), or reach a stop beyond the walking range of the nearest one.
  * Two choices model the passenger, not the graph:
  *
  * - Getting off, one is wherever one's carriage stopped, so the time is the *average* over the
@@ -92,14 +95,13 @@ function buildGraphs(
     if (p.bidirectional) add(p.to, p.from, pathwaySeconds(feed, p, p.to, p.from, options));
   }
   // Out of one entrance and in through another, along the street: at Muzeum the only step-free
-  // way between lines A and C is up one elevator to the street and down the other. Only for
-  // step-free changes: in the normal graph it would shorten some changes already checked
-  // against IDOS (side-platform stations), which needs its own comparison first.
-  if (!stepFree) return { forward, backward };
+  // way between lines A and C is up one elevator to the street and down the other. Compared on
+  // PID (14 Nov 2026): 39 changes of the normal graph get shorter or appear, the street parts
+  // agree with OpenStreetMap's footpaths, and 1 of 2,000 random journeys changes.
   for (const exits of entrances.values()) {
     for (const a of exits) {
       for (const b of exits) {
-        if (a === b || feed.stops[a]!.wheelchair === 2 || feed.stops[b]!.wheelchair === 2) continue;
+        if (a === b || (stepFree && (feed.stops[a]!.wheelchair === 2 || feed.stops[b]!.wheelchair === 2))) continue;
         const seconds = street(a, b);
         if (seconds !== undefined) add(a, b, seconds);
       }
@@ -221,9 +223,9 @@ export function stationTransfers(
     return metres <= walk.maxMetres ? (metres * walk.detour) / walk.speed : undefined;
   };
   const { forward, backward } = buildGraphs(feed, options, stepFree, surface, entrances);
-  // Only the step-free graph has street walks between entrances; without them, what's left is
-  // the way inside, to tell which changes go out to the street.
-  const inside = stepFree ? buildGraphs(feed, options, stepFree, () => undefined, entrances).forward : undefined;
+  // Without the street walks between entrances, what's left is the way inside, to tell which
+  // changes go out to the street.
+  const inside = buildGraphs(feed, options, stepFree, () => undefined, entrances).forward;
 
   const result: StationTransfer[] = [];
   const byStation = new Map<string, number[]>();
@@ -242,7 +244,7 @@ export function stationTransfers(
       const fromStarts = starts.map((a) => dijkstra(forward, a));
       const average = (cost: (dist: Map<number, number>) => number, dists = fromStarts): number =>
         dists.reduce((sum, dist) => sum + cost(dist), 0) / dists.length;
-      const insideStarts = inside && starts.map((a) => dijkstra(inside, a));
+      const insideStarts = starts.map((a) => dijkstra(inside, a));
 
       for (const to of platforms) {
         if (to === from) continue;
@@ -251,7 +253,7 @@ export function stationTransfers(
         const seconds = average(nearest);
         if (!Number.isFinite(seconds)) continue;
         const change = { from, to, seconds: Math.ceil(seconds + options.bufferSeconds) };
-        result.push(insideStarts && average(nearest, insideStarts) > seconds ? { ...change, street: true } : change);
+        result.push(average(nearest, insideStarts) > seconds ? { ...change, street: true } : change);
       }
       for (const stop of nearby) {
         const seconds = average((dist) =>
