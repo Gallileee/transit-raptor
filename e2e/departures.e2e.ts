@@ -27,7 +27,7 @@ test("shows the next departures of the stop in the URL", async ({ page }) => {
   // The metro's colours from routes.txt; the step-free bus says so on its badge.
   await expect(rows(page).nth(4).locator(".badge")).toHaveCSS("background-color", "rgb(0, 165, 98)");
   await expect(rows(page).nth(2).locator(".badge")).toHaveAttribute("title", "bus · step-free");
-  await expect(page.locator("#updated")).toHaveText("Updated 07:58:00");
+  await expect(page.locator("#updated")).toHaveText(/^Updated 07:58:0\d$/); // the clock runs on while the test works
 });
 
 test("counts down, drops what has left, and asks again every 30 s", async ({ page }) => {
@@ -62,7 +62,40 @@ test("keeps counting down while the server doesn't answer", async ({ page }) => 
   await page.clock.runFor(150_000); // 08:01:32: the 08:00 departures have left
   await expect(rows(page)).toHaveCount(3);
   await expect(rows(page).first().locator(".time")).toHaveText("08:05");
-  await expect(page.locator("#updated")).toHaveText("Updated 07:58:00");
+  await expect(page.locator("#updated")).toHaveText(/^Updated 07:58:0\d$/); // the clock runs on while the test works
+});
+
+test("shows live delays and cancellations when the server has them", async ({ page }) => {
+  // The test server has no Golemio key: the answer is given the live data a key would bring.
+  let live = "on";
+  await page.route("**/api/departures?*", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    body.live = live;
+    if (live === "on") {
+      body.departures[0].delay = 20; // tram 1: on time
+      body.departures[1].delay = 150; // bus 300: 2.5 min late, so expected at 08:02:30
+      body.departures[1].expectedMinutes = 4;
+      body.departures[2].canceled = true; // the express
+    }
+    await route.fulfill({ response, json: body });
+  });
+  await page.goto("/departures?stop=alpha");
+  await expect(rows(page)).toHaveCount(5);
+  expect(await Promise.all((await rows(page).all()).slice(0, 3).map((r) => r.locator("td").allInnerTexts()))).toEqual([
+    ["08:00 on time", "2 min", "1", "Charlie", ""],
+    ["08:00 +2 min", "4 min", "300", "Delta, Náměstí", ""],
+    ["08:05", "canceled", "300", "Delta, Náměstí", ""],
+  ]);
+  await expect(rows(page).nth(2)).toHaveClass("canceled");
+  await expect(rows(page).nth(1).locator(".delay")).toHaveCSS("font-weight", "600");
+  await expect(page.locator("#updated")).toHaveText(/^Updated 07:58:0\d · live delays from PID$/);
+
+  // (Which late vehicles stay on the board after their time is the server's work: tests/realtime.)
+  live = "error";
+  await page.getByRole("button", { name: "Show" }).click();
+  await expect(page.locator("#updated")).toHaveText(/^Updated 07:58:0\d · live delays unavailable, timetable times$/);
+  await expect(page.locator(".delay")).toHaveCount(0);
 });
 
 test("an ambiguous stop offers the names; picking one shows its board and keeps it in the URL", async ({ page }) => {

@@ -142,7 +142,7 @@ describe("transit-raptor departures", () => {
   const run = async (...args: string[]) => {
     const out: string[] = [];
     const err: string[] = [];
-    const io = { out: (l: string) => out.push(l), err: (l: string) => err.push(l), now: () => new Date(2026, 10, 10, 7, 58) };
+    const io = { out: (l: string) => out.push(l), err: (l: string) => err.push(l), now: () => new Date(2026, 10, 10, 7, 58), env: {} };
     const code = await main(["departures", "--gtfs", MINI, "--no-cache", ...args], io);
     return { code, out, err };
   };

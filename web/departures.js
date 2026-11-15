@@ -104,7 +104,8 @@ async function refresh(stop) {
     at: now,
     // A planned board counts from its own moment and doesn't move.
     reference: planned ? asked : undefined,
-    departures: body.departures.map((d) => ({ ...d, time: new Date(asked.getTime() + d.minutes * 60_000) })),
+    // When it is expected to leave: the timetable's time plus the live delay, if there is one.
+    departures: body.departures.map((d) => ({ ...d, time: new Date(asked.getTime() + d.expectedMinutes * 60_000) })),
   };
   draw();
   const later = planned ? ` after ${body.time} on ${day(body.date)}` : " in the next 2 hours";
@@ -119,7 +120,8 @@ async function refresh(stop) {
     });
     updated.replaceChildren(`Timetable for ${day(body.date)} at ${body.time} · `, live);
   } else {
-    updated.textContent = `Updated ${now.toLocaleTimeString("en-GB")}`;
+    const live = { on: " · live delays from PID", error: " · live delays unavailable, timetable times" }[body.live] ?? "";
+    updated.textContent = `Updated ${now.toLocaleTimeString("en-GB")}${live}`;
     schedule(stop);
   }
 }
@@ -150,6 +152,12 @@ document.addEventListener("visibilitychange", () => {
 
 // --- drawing --------------------------------------------------------------------------------
 
+/** "+3 min", "on time", "-1 min" (early) from seconds late, as the CLI says it. */
+function delayText(seconds) {
+  const minutes = Math.trunc(seconds / 60); // under a minute either way is on time
+  return minutes === 0 ? "on time" : minutes > 0 ? `+${minutes} min` : `${minutes} min`;
+}
+
 /** "now", "1 min", "12 min", counted the way a clock shows it. */
 function inMinutes(time, now = new Date()) {
   const minutes = Math.floor(time.getTime() / 60_000) - Math.floor(now.getTime() / 60_000);
@@ -164,8 +172,14 @@ function draw() {
   table.tBodies[0].replaceChildren(
     ...shown.map((d) => {
       const row = el("tr");
-      row.append(el("td", "time", d.departure));
-      row.append(el("td", "in", inMinutes(d.time, now)));
+      const time = el("td", "time", d.departure);
+      if (d.delay !== null && d.delay !== undefined && !d.canceled) {
+        const late = delayText(d.delay);
+        time.append(" ", el("span", late === "on time" ? "delay on-time" : "delay", late));
+      }
+      row.append(time);
+      if (d.canceled) row.classList.add("canceled");
+      row.append(el("td", "in", d.canceled ? "canceled" : inMinutes(d.time, now)));
       const line = el("td");
       const badge = el("span", "badge", d.line);
       badge.title = d.access === "yes" ? `${d.mode} · step-free` : d.mode;

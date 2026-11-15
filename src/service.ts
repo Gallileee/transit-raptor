@@ -5,6 +5,7 @@
 import { fingerprint, type OpenedFeed, openFeed } from "./cache.js";
 import { type Access, coveredDates, type Feed, feedForDate } from "./gtfs.js";
 import { earliestTrip, type Journey, type Leg, plan, profile } from "./raptor.js";
+import { type LiveDeparture, liveKey, type Realtime, RealtimeError } from "./realtime.js";
 import { cut, type LatLon, type Shapes } from "./shapes.js";
 import { StopIndex, type StopMatch } from "./stops.js";
 import { formatClock, formatDate, minutesBetween, parseClock, parseDate, type ServiceDate } from "./time.js";
@@ -176,8 +177,10 @@ export interface DeparturesRequest {
 export interface DepartureJson {
   /** HH:MM; "+1" style suffix after midnight, as in journeys. */
   departure: string;
-  /** From the request time, counted the way a clock shows it. */
+  /** From the request time to the timetable's time, counted the way a clock shows it. */
   minutes: number;
+  /** The same to when it is expected to leave: with the live delay, if there is one. */
+  expectedMinutes: number;
   mode: string;
   line: string;
   color: string;
@@ -187,6 +190,10 @@ export interface DepartureJson {
   platform: string;
   /** Vehicle and stop, as for rides: "yes", "no" or "unknown". */
   access: "yes" | "no" | "unknown";
+  /** Live: seconds late (negative: early), or null when not known (no live data, or no report). */
+  delay: number | null;
+  /** Live: the trip won't run. */
+  canceled: boolean;
 }
 
 export interface DeparturesResponse {
@@ -194,8 +201,21 @@ export interface DeparturesResponse {
   date: string;
   time: string;
   departures: DepartureJson[];
+  /**
+   * Live delays: "on" (asked and answered), "off" (no source configured, or the board isn't for
+   * now) or "error" (the source didn't answer; the timetable is shown as it is).
+   */
+  live: "on" | "off" | "error";
   feed: FeedInfo;
 }
+
+/** How far from the server's clock a board may be and still get live delays (they are for now). */
+const LIVE_WITHIN = 5 * 60;
+/**
+ * With live delays, a board also looks this far back in the timetable: a late vehicle scheduled
+ * before now is still to come. (Golemio keeps 30 minutes of the past.)
+ */
+const LATE_LOOKBACK = 15 * 60;
 
 /** What `checkForNewFeed` did. */
 export type ReloadResult = "unchanged" | "waiting" | "reloaded" | "failed" | "busy";
@@ -215,6 +235,9 @@ export class Planner {
   /** A fingerprint whose files failed to load: not tried again until they change. */
   private failed: string | undefined;
   private reloading = false;
+  /** Live delays for departure boards (Golemio with an API key), or none. */
+  realtime: Realtime | undefined;
+  private liveErrorLogged = 0;
 
   constructor(
     readonly gtfsDir: string,
@@ -354,20 +377,24 @@ export class Planner {
     const stop = resolve(loaded.index, request.stop, "stop");
     const { feed, timetable } = loaded;
     const until = from + window * 60;
-    const found: { at: number; json: Omit<DepartureJson, "minutes"> }[] = [];
+    const live = this.liveWanted(date, from);
+    const start = live ? from - LATE_LOOKBACK : from;
+    const found: { at: number; key: string; json: Omit<DepartureJson, "minutes" | "expectedMinutes" | "delay" | "canceled"> }[] = [];
     for (const s of stop.stops) {
       for (const { pattern: p, position } of timetable.stopPatterns[s]!) {
         const pattern = timetable.patterns[p]!;
         if (position === pattern.stops.length - 1 || !pattern.canBoard[position]) continue;
         const route = feed.routes.get(pattern.routeId);
-        const first = earliestTrip(timetable, p, position, from);
+        const first = earliestTrip(timetable, p, position, start);
         // Trips of a pattern don't overtake each other, so their departures here are in order.
-        for (let t = first; t >= 0 && t < pattern.trips.length && t < first + limit; t++) {
+        const most = limit + (start < from ? 30 : 0); // room for the ones looked back at
+        for (let t = first; t >= 0 && t < pattern.trips.length && t < first + most; t++) {
           const at = departureAt(pattern, t, position);
           if (at > until) break;
           const trip = pattern.trips[t]!;
           found.push({
             at,
+            key: liveKey(trip.id, feed.stops[s]!.id),
             json: {
               departure: formatClock(at),
               mode: route ? (MODES[route.type] ?? "line") : "line",
@@ -382,14 +409,60 @@ export class Planner {
         }
       }
     }
-    found.sort((a, b) => a.at - b.at || a.json.line.localeCompare(b.json.line));
+    const { known, state } = live
+      ? await this.liveFor(this.realtime!, date, from, window, limit, stop.stops.map((s) => feed.stops[s]!.id))
+      : { known: new Map<string, LiveDeparture>(), state: "off" as const };
+    const departures = found
+      .map(({ at, key, json }) => {
+        const info = known.get(key);
+        const delay = info?.delay ?? null;
+        const expected = at + (delay ?? 0);
+        return { at, expected, json: { ...json, minutes: minutesBetween(from, at), expectedMinutes: minutesBetween(from, expected), delay, canceled: info?.canceled ?? false } };
+      })
+      // Looked back at for late vehicles: only those still to come stay.
+      .filter((d) => d.at >= from || (d.json.delay !== null && !d.json.canceled && d.expected >= from))
+      .sort((a, b) => a.expected - b.expected || a.at - b.at || a.json.line.localeCompare(b.json.line));
     return {
       stop: stop.name,
       date: formatDate(date),
       time: formatClock(from),
-      departures: found.slice(0, limit).map(({ at, json }) => ({ ...json, minutes: minutesBetween(from, at) })),
+      departures: departures.slice(0, limit).map((d) => d.json),
+      live: state,
       feed: loaded.info,
     };
+  }
+
+  /** Whether a board gets live delays: a source is set and the board is for now. */
+  private liveWanted(date: ServiceDate, from: number): boolean {
+    if (!this.realtime) return false;
+    const asked = new Date(date.year, date.month - 1, date.day, 0, 0, from);
+    return Math.abs(asked.getTime() - this.now().getTime()) <= LIVE_WITHIN * 1000;
+  }
+
+  /** Live delays for a board. Never throws for the source failing. */
+  private async liveFor(realtime: Realtime, date: ServiceDate, from: number, window: number, limit: number, stopIds: string[]) {
+    const now = this.now();
+    const clock = formatClock(from).slice(0, 5);
+    try {
+      const known = await realtime.departures({
+        stopIds,
+        from: `${formatDate(date)}T${clock}:00`,
+        before: LATE_LOOKBACK / 60,
+        minutes: window,
+        // Golemio counts departures over all the platforms, and may order them a little
+        // differently: ask for more than are shown.
+        limit: Math.min(1000, limit * 3 + 30),
+      });
+      return { known, state: "on" as const };
+    } catch (e) {
+      if (!(e instanceof RealtimeError)) throw e;
+      // Logged at most once a minute: a board refreshes every 30 s.
+      if (now.getTime() - this.liveErrorLogged > 60_000) {
+        this.liveErrorLogged = now.getTime();
+        this.log(`live: no delays (${e.message}); showing the timetable`);
+      }
+      return { known: new Map<string, LiveDeparture>(), state: "error" as const };
+    }
   }
 
   async plan(request: PlanRequest): Promise<PlanResponse> {

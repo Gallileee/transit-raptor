@@ -1,5 +1,52 @@
 # Progress log
 
+## 2026-11-15 (interactive): live delays on the departures board
+
+Why: next step 1, picked by the user. The board showed timetable times; IDOS shows the delay
+of each departure.
+
+Source: Golemio's PID API (`GET /v2/pid/departureboards`, OpenAPI at
+api.golemio.cz/pid/docs/openapi/): `ids` = GTFS stop ids, `timeFrom` (Prague time),
+`minutesBefore` (at most 30), `minutesAfter`, `limit`, `mode=departures`; key in the
+`X-Access-Token` header; 20 requests per 8 s per key. Each departure has `trip.id` (GTFS
+trip_id), `stop.id`, `delay {is_available, seconds}`, `trip.is_canceled`, `trip.is_at_stop`.
+
+Done:
+- `src/realtime.ts`: `GolemioRealtime` (ids sorted so the same stops make the same request,
+  20 s cache, requests in flight shared, failures not cached, 4 s timeout, RealtimeError with a
+  reason: 401 = key refused); `liveKey(trip, stop)`.
+- `Planner.realtime`; `departures()` asks only for a board within 5 min of the server's clock,
+  then also looks 15 min back in the timetable and keeps vehicles due before now that are late
+  and not cancelled; sorted by expected time. New fields: `delay`, `canceled`,
+  `expectedMinutes`, `live: on | off | error`. A failing source: the timetable, logged at most
+  once a minute.
+- CLI: `GOLEMIO_API_KEY` (and `GOLEMIO_API_URL`, for tests or a proxy) from the environment for
+  `serve` and `departures`; `serve` says whether live delays are on, never the key;
+  `departures` prints "+2 min", "on time", "CANCELED" and "(live)".
+- Page: "+2 min" (red) / "on time" after the time, cancelled rows struck through, countdown to
+  the expected time, "Updated 13:37:52 · live delays from PID" or "... unavailable".
+- `.env` and `.env.*` in .gitignore; launch config `transit-raptor-live` (port 8099,
+  `node --env-file-if-exists=.env`).
+- Tests: `realtime.test.ts` (13; a fake Golemio on a local port checks the path, the query and
+  the header, and that the key is in no URL or output), a browser test with live data put into
+  the API's answer. 216 unit, 31 browser tests.
+
+Verified:
+- Mutations, 18 of 18 caught (3 first missed: is_available ignored, a cancelled late trip kept,
+  order by timetable time; tests added).
+- With the user's key (in a gitignored .env, never read or printed; launch config
+  transit-raptor-live), Sunday 15 Nov 20:15-20:16:
+  - Anděl: our board against Golemio's raw answer for the same platforms and minute, from a
+    separate script: all 18 departures in 8 minutes carry the same delay to the second
+    (-26 to +124 s), so the matching by trip and stop is right, and Golemio takes `ids`
+    repeated for several platforms.
+  - Against IDOS's departures for Anděl 25 s apart, some delays differ (tram 4 Radlická: IDOS
+    "bez zpoždění", Golemio +124 s; tram 20 Dědina: IDOS 1 min, Golemio 14 s): IDOS has its
+    own source and rounding, so it isn't the reference for live data.
+  - Florenc: a late tram 12 (20:19, +4 min) sorted by its expected time; "+1 min" red, "on
+    time" grey; CLI `departures --stop Anděl` prints "(live)" and the delays.
+  - The page's lead and footer still said "not live positions": now they name Golemio.
+
 ## 2026-11-15 (interactive): from a journey's stops to their departures
 
 Why: next step 2, picked by the user. The journey planner and the departures board were two
@@ -780,10 +827,8 @@ Mutation checks: without the filter or without the level penalty, one test each 
 
 ## Next steps (in order)
 
-1. Live delays on the departures board from PID's real-time API (golemio.cz; needs an API key,
-   so the key must stay out of the repository and the page).
-2. Metro platforms at Florenc show no platform on the board: the feed's platform_code is empty
+1. Metro platforms at Florenc show no platform on the board: the feed's platform_code is empty
    there (Anděl has 1 and 2). Name them by direction instead, or leave as the feed says?
-3. Stops without a time in the feed: interpolate by distance (PID has none, so only for other
+2. Stops without a time in the feed: interpolate by distance (PID has none, so only for other
    feeds).
-4. compare-journeys takes ~45 s for 2,000 queries; profile it if it gets run often.
+3. compare-journeys takes ~45 s for 2,000 queries; profile it if it gets run often.
