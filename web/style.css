@@ -469,3 +469,9 @@ select:focus-visible,
 .departures .platform.live {
   font-weight: 700;
 }
+
+/* Under a change at risk: how to go on if it is missed. */
+.leg .fallback {
+  grid-column: 2 / -1;
+  font-size: 0.85rem;
+}

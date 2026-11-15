@@ -9,7 +9,7 @@
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { type LiveDeparture, type LiveQuery, liveKey, type Realtime, RealtimeError } from "../src/realtime.js";
-import { journeyJson, type LegJson, Planner } from "../src/service.js";
+import { fallbackFor, journeyJson, type LegJson, Planner } from "../src/service.js";
 
 const MINI = join(import.meta.dirname, "fixtures", "mini");
 
@@ -136,5 +136,76 @@ describe("live delays in journeys", () => {
     const none = await journeys(undefined);
     expect(none.answer.live).toBe("off");
     expect(summary(none.rides)).toEqual(summary(failed.rides));
+  });
+
+  describe("if a change at risk is missed", () => {
+    const fallbackOf = async (live: Map<string, LiveDeparture>) => (await journeys(live)).answer.journeys.map((j) => j.fallback);
+    const rides = (journey: { legs: LegJson[] } | null | undefined) =>
+      journey?.legs.filter((l): l is Ride => l.kind === "ride").map((r) => [r.line, stopName(r.from), r.departure, r.arrival, r.delay]);
+    const stopName = (s: { name: string; platform: string }) => (s.platform ? `${s.name} (${s.platform})` : s.name);
+
+    it("searches on from where the late vehicle leaves one, when it is expected there", async () => {
+      // Tram 1 at Bravo (1) 08:07:30, bus 200 at 08:08 gone: the next one, 08:18, arrives 08:25.
+      const [direct, viaBravo] = await fallbackOf(new Map([late("L1a", "A", 150)]));
+      expect(direct).toBeUndefined();
+      expect({ ...viaBravo!, journey: rides(viaBravo!.journey) }).toEqual({
+        leg: 2,
+        from: expect.objectContaining({ name: "Bravo", platform: "1" }),
+        at: "08:07",
+        journey: [["200", "Bravo (2)", "08:18", "08:25", null]],
+        later: 10,
+      });
+      expect(viaBravo!.journey!.arrival).toBe("08:25");
+    });
+
+    it("isn't there when no change is at risk", async () => {
+      expect(await fallbackOf(new Map([late("L1a", "A", 60)]))).toEqual([undefined, undefined]);
+      expect(await fallbackOf(new Map([late("L1a", "A", 150), late("L2a", "B2", 90)]))).toEqual([undefined, undefined]);
+      expect(await fallbackOf(new Map())).toEqual([undefined, undefined]);
+    });
+
+    it("gives the next vehicle's delay too, when it is known", async () => {
+      const [, viaBravo] = await fallbackOf(new Map([late("L1a", "A", 150), late("L2b", "B2", 120)]));
+      expect(rides(viaBravo!.journey)).toEqual([["200", "Bravo (2)", "08:18", "08:25", 120]]);
+    });
+
+    it("says when nothing goes on from there", async () => {
+      // Tram 1 25 minutes late: at Bravo 08:30, after the last bus to Delta.
+      const [, viaBravo] = await fallbackOf(new Map([late("L1a", "A", 25 * 60)]));
+      expect(viaBravo).toEqual({ leg: 2, from: expect.objectContaining({ name: "Bravo" }), at: "08:30", journey: null, later: null });
+    });
+
+    it("takes the journey that arrives first, even with more changes", async () => {
+      // Built by hand: a ride into Alpha 2 minutes late (08:01), the 08:00 bus 400 from there
+      // gone. From Alpha at 08:01: bus 300 direct, at Delta 08:30, or tram 1 and bus 200, 08:25.
+      const planner = new Planner(MINI, () => new Date(2026, 10, 10, 7, 50));
+      const loaded = await planner.load({ year: 2026, month: 11, day: 10 });
+      const [a, c, d] = ["A", "C", "D"].map((id) => loaded.feed.stopById.get(id)!);
+      const at = (h: number, m: number) => h * 3600 + m * 60;
+      const journey = {
+        departure: at(7, 50),
+        arrival: at(8, 40),
+        transfers: 1,
+        legs: [
+          { kind: "ride" as const, routeId: "L3", tripId: "T1", headsign: "", from: c!, to: a!, departure: at(7, 50), arrival: at(7, 59), stopCount: 1 },
+          { kind: "ride" as const, routeId: "L3", tripId: "L3slow", headsign: "", from: a!, to: d!, departure: at(8, 0), arrival: at(8, 40), stopCount: 2 },
+        ],
+      };
+      const live = new Map([late("T1", "C", 120)]);
+      const json = journeyJson(loaded, journey, loaded.timetable, live);
+      const fallback = fallbackFor(loaded, journey, json, loaded.timetable, live, [d!], 4)!;
+      expect([fallback.at, rides(fallback.journey), fallback.later]).toEqual([
+        "08:01",
+        [
+          ["1", "Alpha", "08:10", "08:15", null],
+          ["200", "Bravo (2)", "08:18", "08:25", null],
+        ],
+        -15,
+      ]);
+    });
+
+    it("isn't given for a cancelled ride (the cancellation is shown instead)", async () => {
+      expect(await fallbackOf(new Map([late("L1a", "A", 150), late("L2a", "B2", 0, true)]))).toEqual([undefined, undefined]);
+    });
   });
 });

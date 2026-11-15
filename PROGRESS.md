@@ -1,5 +1,38 @@
 # Progress log
 
+## 2026-11-15 (interactive): if a change at risk is missed
+
+Why: next step 1, picked by the user. A journey said "this change may be missed" but not what
+to do then.
+
+Done:
+- `fallbackFor` (service.ts): for the first change at risk of a journey (not a cancelled ride,
+  which says so itself), plan again from the stop where the late vehicle leaves one, from its
+  expected arrival there (timetable + delay), to the same destination, on the same timetable
+  (step-free too) and with the same number of changes; of the journeys found, the one that
+  arrives first. The vehicle that may be gone isn't counted on: it leaves, as late as it is,
+  before one can be at it. Its rides get the live delays already asked for (the stop of the
+  missed change was asked about for the whole hour).
+- `JourneyJson.fallback` (only when a change is at risk): `leg`, `from`, `at`, `journey` (or
+  null), `later` (minutes against the planned arrival).
+- Page: a line under the warning, and "Search from there", which searches from that stop at
+  the time the fallback leaves (not at the time one gets off: from the stop's name, that would
+  offer the missed vehicle again from another platform; the browser test caught it).
+- Tests: 6 unit (Bravo: tram 1 2.5 min late, the next bus 200 at 08:18, 10 min later; none
+  without a risk; the next bus's own delay; nothing more after the last bus; not for a
+  cancelled ride; the earliest arrival over fewer changes), 2 browser. 235 unit, 36 browser.
+
+Verified:
+- Mutations, 9 of 9 caught (no delay in the start time, fewest changes instead of earliest,
+  cancelled rides, no live data for the fallback, the wrong stop in `from` and in the search,
+  the link's time, the "later" text, the line under every ride).
+- Real key, Sunday 22:08: 160 journey lists, 24 with a change at risk, each with a fallback.
+  Checked against IDOS: Flora -> Petřiny, tram 11 +64 s, metro A at Muzeum 22:17 at risk:
+  fallback 22:27 -> 22:41, IDOS's next connection from Muzeum after 22:17 (metro every 10
+  min). Karlovo náměstí -> Ládví, tram 6 +2 min, metro C 22:40 at risk: fallback 22:50, as
+  IDOS (which shows the arrivals a minute later, as for the planned journey too). On the
+  page, the link found the same 22:50 metro from I. P. Pavlova.
+
 ## 2026-11-15 (interactive): trains' tracks from live data
 
 Why: next step 2, picked by the user. Trains have no platform in the timetable (734 train stops
@@ -913,8 +946,8 @@ Mutation checks: without the filter or without the level penalty, one test each 
 
 ## Next steps (in order)
 
-1. Plan around a change at risk: offer the next journey that doesn't rely on it (search again
-   from the late vehicle's expected arrival).
+1. A cancelled ride: a fallback for it as well (needs RAPTOR to skip one trip, since searching
+   from its stop at its time would board it again).
 2. Stops without a time in the feed: interpolate by distance (PID has none, so only for other
    feeds).
 3. compare-journeys takes ~45 s for 2,000 queries; profile it if it gets run often.
