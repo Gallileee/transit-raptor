@@ -109,7 +109,7 @@ function labels(n: number): Labels {
 }
 
 /** The earliest trip of pattern `p` that leaves `position` at or after `time`, or -1. */
-function earliestTrip(tt: Timetable, p: number, position: number, time: number): number {
+export function earliestTrip(tt: Timetable, p: number, position: number, time: number): number {
   const pattern = tt.patterns[p]!;
   let lo = 0;
   let hi = pattern.trips.length;

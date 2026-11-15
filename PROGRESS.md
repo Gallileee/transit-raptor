@@ -1,5 +1,42 @@
 # Progress log
 
+## 2026-11-15 (interactive): a departures board
+
+Why: picked by the user ("Live departures board"). The planner answered "how do I get to X";
+nothing showed what leaves a stop next, the most common question at a stop.
+
+Acceptance criteria:
+- The next departures from every platform of a stop: time, minutes to go, line in its colour,
+  direction, platform. A trip ending at the stop, or only letting people off, isn't listed.
+- The board stays current without reloading: it refreshes itself and counts down.
+- The same in the API and the CLI.
+- "Live" here means a board that keeps itself up to date from the timetable; delays need PID's
+  separate real-time API (with a key), not done.
+
+Done:
+- `Planner.departures()`: for each platform of the stop, its patterns and position
+  (`timetable.stopPatterns`), the first trip by binary search (`earliestTrip`, now exported),
+  then trips in order until the window (default 120 min) or the limit (default 20, at most
+  100) per pattern; merged by time (then line). After midnight: yesterday's trips shifted as in
+  journeys, today's shown "00:10 (+1)". `access` from vehicle and stop.
+- `GET /api/departures`, the page `/departures` (`web/departures.html`, `departures.js`), nav
+  links between the two pages, `transit-raptor departures --stop NAME [--limit] [--window]`.
+- The page refreshes every 30 s after the previous answer (not while the tab is hidden; at once
+  when it comes back), recounts "in N min" every 15 s on the device's clock, and drops what has
+  left; a failed refresh keeps the board and tries again.
+- Tests: `departures.test.ts` (12: order, trips ending there, pickup_type 1, drive-past, window,
+  limit, midnight both ways, minutes as a clock shows them, access by stop, API, page, CLI);
+  `e2e/departures.e2e.ts` (7, with page.clock). 204 unit tests, 25 browser tests (3 runs of the
+  board tests twice each, no flakes).
+
+Verified:
+- Mutations: 15 of 16 caught. Not caught: the tie-break by line within a minute (the test feed's
+  order is already the same).
+- Real feed in the browser (Sunday 15 Nov, 13:37, Anděl): the board against IDOS's departures
+  for the same stop and time, 13:37-13:42: the same 14 departures (metro B both ways, trams 10,
+  12, 7, 9, buses 191 and 167), same directions and platforms; only the order within a minute
+  differs. IDOS adds live delays.
+
 ## 2026-11-15 (interactive): island platforms at Hlavní nádraží and Černý Most? No
 
 Why: next step 1, picked by the user. The station graph joins tracks 1 and 2 of Hlavní nádraží
@@ -719,6 +756,9 @@ Mutation checks: without the filter or without the level penalty, one test each 
 
 ## Next steps (in order)
 
-1. Stops without a time in the feed: interpolate by distance (PID has none, so only for other
+1. Live delays on the departures board from PID's real-time API (golemio.cz; needs an API key,
+   so the key must stay out of the repository and the page).
+2. Click a stop on the journey map or in a journey to open its departures board.
+3. Stops without a time in the feed: interpolate by distance (PID has none, so only for other
    feeds).
-2. compare-journeys takes ~45 s for 2,000 queries; profile it if it gets run often.
+4. compare-journeys takes ~45 s for 2,000 queries; profile it if it gets run often.

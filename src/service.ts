@@ -4,11 +4,11 @@
  */
 import { fingerprint, type OpenedFeed, openFeed } from "./cache.js";
 import { type Access, coveredDates, type Feed, feedForDate } from "./gtfs.js";
-import { type Journey, type Leg, plan, profile } from "./raptor.js";
+import { earliestTrip, type Journey, type Leg, plan, profile } from "./raptor.js";
 import { cut, type LatLon, type Shapes } from "./shapes.js";
 import { StopIndex, type StopMatch } from "./stops.js";
 import { formatClock, formatDate, minutesBetween, parseClock, parseDate, type ServiceDate } from "./time.js";
-import { buildTimetable, type Timetable, viaStreet } from "./timetable.js";
+import { buildTimetable, departure as departureAt, type Timetable, viaStreet } from "./timetable.js";
 
 /** Something the caller got wrong (an unknown stop, a malformed time): HTTP 400, not 500. */
 export class RequestError extends Error {
@@ -163,6 +163,40 @@ export interface PlanResponse {
   feed: FeedInfo;
 }
 
+export interface DeparturesRequest {
+  stop: string;
+  date?: string | undefined;
+  time?: string | undefined;
+  /** At most this many departures (default 20, 1-100). */
+  limit?: number | undefined;
+  /** Only departures within this many minutes (default 120, 1-1440). */
+  window?: number | undefined;
+}
+
+export interface DepartureJson {
+  /** HH:MM; "+1" style suffix after midnight, as in journeys. */
+  departure: string;
+  /** From the request time, counted the way a clock shows it. */
+  minutes: number;
+  mode: string;
+  line: string;
+  color: string;
+  textColor: string;
+  headsign: string;
+  /** The platform (stop) it leaves from, as in the feed's platform_code. */
+  platform: string;
+  /** Vehicle and stop, as for rides: "yes", "no" or "unknown". */
+  access: "yes" | "no" | "unknown";
+}
+
+export interface DeparturesResponse {
+  stop: string;
+  date: string;
+  time: string;
+  departures: DepartureJson[];
+  feed: FeedInfo;
+}
+
 /** What `checkForNewFeed` did. */
 export type ReloadResult = "unchanged" | "waiting" | "reloaded" | "failed" | "busy";
 
@@ -300,6 +334,62 @@ export class Planner {
     const { index } = await this.load(date ? parseDate(date) : this.today());
     const match = index.find(text, 10);
     return match.kind === "found" ? [match.name] : match.kind === "ambiguous" ? match.names : match.suggestions;
+  }
+
+  /**
+   * The next departures from every platform of a stop, from the timetable: one line per trip
+   * that lets passengers on there and goes on (a trip ending there is an arrival, not listed).
+   */
+  async departures(request: DeparturesRequest): Promise<DeparturesResponse> {
+    const date = request.date ? parseDate(request.date) : this.today();
+    const now = this.now();
+    const from = request.time ? parseClock(request.time) : now.getHours() * 3600 + now.getMinutes() * 60;
+    const limit = request.limit ?? 20;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new RequestError("limit must be a whole number from 1 to 100");
+    const window = request.window ?? 120;
+    if (!Number.isInteger(window) || window < 1 || window > 24 * 60) {
+      throw new RequestError("window must be a whole number of minutes from 1 to 1440");
+    }
+    const loaded = await this.load(date);
+    const stop = resolve(loaded.index, request.stop, "stop");
+    const { feed, timetable } = loaded;
+    const until = from + window * 60;
+    const found: { at: number; json: Omit<DepartureJson, "minutes"> }[] = [];
+    for (const s of stop.stops) {
+      for (const { pattern: p, position } of timetable.stopPatterns[s]!) {
+        const pattern = timetable.patterns[p]!;
+        if (position === pattern.stops.length - 1 || !pattern.canBoard[position]) continue;
+        const route = feed.routes.get(pattern.routeId);
+        const first = earliestTrip(timetable, p, position, from);
+        // Trips of a pattern don't overtake each other, so their departures here are in order.
+        for (let t = first; t >= 0 && t < pattern.trips.length && t < first + limit; t++) {
+          const at = departureAt(pattern, t, position);
+          if (at > until) break;
+          const trip = pattern.trips[t]!;
+          found.push({
+            at,
+            json: {
+              departure: formatClock(at),
+              mode: route ? (MODES[route.type] ?? "line") : "line",
+              line: route?.shortName || route?.longName || pattern.routeId,
+              color: route?.color ?? "",
+              textColor: route?.textColor ?? "",
+              headsign: trip.headsign,
+              platform: feed.stops[s]!.platform,
+              access: combinedAccess([trip.wheelchair, feed.stops[s]!.wheelchair]),
+            },
+          });
+        }
+      }
+    }
+    found.sort((a, b) => a.at - b.at || a.json.line.localeCompare(b.json.line));
+    return {
+      stop: stop.name,
+      date: formatDate(date),
+      time: formatClock(from),
+      departures: found.slice(0, limit).map(({ at, json }) => ({ ...json, minutes: minutesBetween(from, at) })),
+      feed: loaded.info,
+    };
   }
 
   async plan(request: PlanRequest): Promise<PlanResponse> {

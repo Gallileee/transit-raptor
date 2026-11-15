@@ -3,8 +3,9 @@
  *
  *   GET /api/stops?q=andel[&date=YYYY-MM-DD]          -> ["Anděl"]
  *   GET /api/plan?from=&to=[&date=][&time=HH:MM][&window=MIN][&maxTransfers=N][&list=1][&stepFree=1]
+ *   GET /api/departures?stop=[&date=][&time=HH:MM][&limit=N][&window=MIN]
  *   GET /api/feed  -> {"firstDate":"2026-11-09","lastDate":"2026-11-22","loadedAt":"2026-11-14T16:24:05.120Z"}
- *   GET /, /app.js, /style.css                        -> the page
+ *   GET /, /app.js, /style.css, /departures, /departures.js -> the pages
  *
  * Only node:http, no framework: three routes don't need one. It listens on 127.0.0.1 unless told
  * otherwise, serves a fixed list of files (no paths from the URL reach the file system) and
@@ -23,6 +24,8 @@ const STATIC: Record<string, { file: string; type: string }> = {
   "/": { file: "index.html", type: "text/html; charset=utf-8" },
   "/app.js": { file: "app.js", type: "text/javascript; charset=utf-8" },
   "/style.css": { file: "style.css", type: "text/css; charset=utf-8" },
+  "/departures": { file: "departures.html", type: "text/html; charset=utf-8" },
+  "/departures.js": { file: "departures.js", type: "text/javascript; charset=utf-8" },
 };
 
 // The page loads Leaflet from cdnjs and map tiles from OpenStreetMap; nothing else.
@@ -71,6 +74,21 @@ async function handle(planner: Planner, req: IncomingMessage, res: ServerRespons
     if (url.pathname === "/api/stops") {
       const q = url.searchParams.get("q") ?? "";
       json(res, 200, q.trim() ? await planner.stops(q, url.searchParams.get("date") ?? undefined) : []);
+      return;
+    }
+    if (url.pathname === "/api/departures") {
+      const p = url.searchParams;
+      json(
+        res,
+        200,
+        await planner.departures({
+          stop: p.get("stop") ?? "",
+          date: p.get("date") || undefined,
+          time: p.get("time") || undefined,
+          limit: number(p.get("limit"), "limit"),
+          window: number(p.get("window"), "window"),
+        }),
+      );
       return;
     }
     if (url.pathname === "/api/feed") {

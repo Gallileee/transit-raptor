@@ -20,10 +20,12 @@ export const test = base.extend<{ problems: string[] }>({
   problems: [
     async ({ page }, use) => {
       const problems: string[] = [];
-      // A 400 from the API is an answer the page shows (an unknown stop); the browser still logs it.
+      // A 400 from the API is an answer the pages show (an unknown stop); the browser still logs it.
       const answered = new Set<string>();
       page.on("response", (response) => {
-        if (response.status() === 400 && new URL(response.url()).pathname === "/api/plan") answered.add(response.url());
+        if (response.status() === 400 && ["/api/plan", "/api/departures"].includes(new URL(response.url()).pathname)) {
+          answered.add(response.url());
+        }
       });
       page.on("console", (message) => {
         if (message.type() !== "error") return;

@@ -2,10 +2,11 @@
  * transit-raptor plan  --gtfs DIR --from NAME --to NAME [--date YYYY-MM-DD] [--time HH:MM]
  *                      [--max-transfers N] [--window MIN] [--list] [--step-free]
  * transit-raptor stops --gtfs DIR --search TEXT
+ * transit-raptor departures --gtfs DIR --stop NAME [--date] [--time] [--limit 20] [--window 120]
  * transit-raptor serve --gtfs DIR [--port 8080] [--host 127.0.0.1] [--reload MIN]
  * Every command also takes [--cache DIR | --no-cache].
  *
- * Exit codes: 0 = journeys found (or stops listed), 1 = no journey, 2 = bad input or feed.
+ * Exit codes: 0 = journeys (stops, departures) found, 1 = none, 2 = bad input or feed.
  */
 import { parseArgs } from "node:util";
 import { coverageNote, formatJourney } from "./format.js";
@@ -13,7 +14,7 @@ import { defaultCacheDir, openFeed } from "./cache.js";
 import { FeedError, feedForDate } from "./gtfs.js";
 import { type Journey, plan, profile } from "./raptor.js";
 import { createAppServer } from "./server.js";
-import { Planner } from "./service.js";
+import { Planner, RequestError } from "./service.js";
 import { StopIndex, type StopMatch } from "./stops.js";
 import { formatDate, parseClock, parseDate, type ServiceDate, TimeError } from "./time.js";
 import { buildTimetable } from "./timetable.js";
@@ -22,6 +23,8 @@ const USAGE = `Usage:
   transit-raptor plan  --gtfs DIR --from NAME --to NAME [--date YYYY-MM-DD] [--time HH:MM]
                        [--max-transfers N] [--window MIN] [--list] [--step-free]
   transit-raptor stops --gtfs DIR --search TEXT
+  transit-raptor departures --gtfs DIR --stop NAME [--date YYYY-MM-DD] [--time HH:MM]
+                       [--limit 20] [--window 120]
   transit-raptor serve --gtfs DIR [--port 8080] [--host 127.0.0.1] [--reload MIN]
 
 DIR is an unzipped GTFS feed (e.g. data/pid after npm run fetch-pid).
@@ -30,7 +33,10 @@ plan shows the fastest journey for each number of transfers, leaving as late as 
 --window minutes of --time (default 60). --list shows every journey worth taking in the window.
 --step-free keeps to vehicles, stops and changes usable with a wheelchair (no stairs or
 escalators); stops and vehicles the feed says nothing about are allowed.
-serve runs the web page with a map and its JSON API (/api/plan, /api/stops).
+departures lists the next departures from every platform of a stop, from the timetable:
+at most --limit, within --window minutes of --time.
+serve runs the web pages (journeys on a map, a departures board) and their JSON API
+(/api/plan, /api/stops, /api/departures, /api/feed).
 The feed is read once into a binary cache (DIR/.transit-raptor-cache, or --cache DIR) that
 later runs load in a fraction of the time; it is rebuilt when a feed file changes.
 --no-cache reads the CSV files every time and writes nothing.
@@ -73,7 +79,9 @@ async function run(argv: string[], io: Io): Promise<number> {
         date: { type: "string" },
         time: { type: "string" },
         "max-transfers": { type: "string", default: "4" },
-        window: { type: "string", default: "60" },
+        window: { type: "string" },
+        stop: { type: "string" },
+        limit: { type: "string", default: "20" },
         list: { type: "boolean", default: false },
         "step-free": { type: "boolean", default: false },
         search: { type: "string" },
@@ -89,13 +97,24 @@ async function run(argv: string[], io: Io): Promise<number> {
     throw new UsageError((e as Error).message);
   }
   const { values } = parsed;
-  if (command !== "plan" && command !== "stops" && command !== "serve") {
+  if (command !== "plan" && command !== "stops" && command !== "serve" && command !== "departures") {
     throw new UsageError(command ? `unknown command "${command}"` : "no command");
   }
   if (!values.gtfs) throw new UsageError("--gtfs is required");
   if (values.cache !== undefined && values["no-cache"]) throw new UsageError("--cache and --no-cache don't go together");
   const cacheDir = values["no-cache"] ? undefined : (values.cache ?? defaultCacheDir(values.gtfs));
   if (command === "serve") return serve(values.gtfs, values.port, values.host, values.reload, cacheDir, io);
+  if (command === "departures") {
+    if (!values.stop) throw new UsageError("--stop is required");
+    const whole = (text: string | undefined) => (text === undefined ? undefined : /^\d+$/.test(text) ? Number(text) : NaN);
+    return departures(new Planner(values.gtfs, io.now, 1, io.err, cacheDir), io, {
+      stop: values.stop,
+      date: values.date,
+      time: values.time,
+      limit: whole(values.limit),
+      window: whole(values.window),
+    });
+  }
 
   const now = io.now();
   const date: ServiceDate = values.date
@@ -121,7 +140,7 @@ async function run(argv: string[], io: Io): Promise<number> {
   if (!Number.isInteger(maxTransfers) || maxTransfers < 0 || maxTransfers > 10) {
     throw new UsageError("--max-transfers must be a whole number from 0 to 10");
   }
-  const window = Number(values.window);
+  const window = Number(values.window ?? "60");
   if (!Number.isInteger(window) || window < 0 || window > 24 * 60) {
     throw new UsageError("--window must be a whole number of minutes from 0 to 1440");
   }
@@ -180,6 +199,29 @@ async function serve(
     timer.unref(); // the server keeps the process alive, not the timer
     server.once("close", () => clearInterval(timer));
     io.err(`Looking for a new feed in ${gtfs} every ${reload} min`);
+  }
+  return 0;
+}
+
+async function departures(planner: Planner, io: Io, request: Parameters<Planner["departures"]>[0]): Promise<number> {
+  let answer;
+  try {
+    answer = await planner.departures(request);
+  } catch (e) {
+    if (!(e instanceof RequestError)) throw e;
+    const hint = e.suggestions.length > 0 ? ` (did you mean: ${e.suggestions.join(", ")}?)` : "";
+    throw new UsageError(`--${e.message.replace(/^stop:/, "stop:")}${hint}`);
+  }
+  if (answer.departures.length === 0) {
+    io.out(`No departures from ${answer.stop} after ${answer.time} on ${answer.date}.`);
+    return 1;
+  }
+  io.out(`Departures from ${answer.stop}, ${answer.date} ${answer.time}`);
+  const width = Math.max(...answer.departures.map((d) => `${d.mode} ${d.line}`.length));
+  for (const d of answer.departures) {
+    const platform = d.platform ? `  (platform ${d.platform})` : "";
+    const towards = d.headsign ? `towards ${d.headsign}` : "";
+    io.out(`  ${d.departure}  ${(d.minutes <= 0 ? "now" : `in ${d.minutes} min`).padEnd(11)}${`${d.mode} ${d.line}`.padEnd(width)}  ${towards}${platform}`);
   }
   return 0;
 }

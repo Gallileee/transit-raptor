@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Departures · transit-raptor</title>
+    <meta name="description" content="The next departures from a stop on Prague's PID timetable." />
+    <link rel="stylesheet" href="/style.css" />
+    <script src="/departures.js" type="module"></script>
+  </head>
+  <body>
+    <main class="board">
+      <header>
+        <nav class="nav" aria-label="Pages"><a href="/">Journeys</a> · <strong>Departures</strong></nav>
+        <h1 id="title">Departures</h1>
+        <p class="lead">The next departures from a stop, from the timetable. The board refreshes itself.</p>
+      </header>
+
+      <form id="search" autocomplete="off">
+        <div class="row">
+          <label class="grow"
+            >Stop <input id="stop" name="stop" list="stop-list" placeholder="e.g. Anděl" required
+          /></label>
+          <datalist id="stop-list"></datalist>
+          <button type="submit" class="primary">Show</button>
+        </div>
+      </form>
+
+      <p id="status" role="status" aria-live="polite"></p>
+      <div id="suggestions" class="suggestions" hidden></div>
+      <table id="departures" class="departures" hidden>
+        <caption id="caption"></caption>
+        <thead>
+          <tr>
+            <th scope="col">Time</th>
+            <th scope="col">In</th>
+            <th scope="col">Line</th>
+            <th scope="col">Towards</th>
+            <th scope="col">Platform</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <p id="updated" class="updated"></p>
+    </main>
+    <footer class="footer">
+      Timetable: <a href="https://pid.cz/o-systemu/opendata/">PID / ROPID</a>, CC BY 4.0 (times from the
+      timetable, not live positions) ·
+      <a href="https://github.com/Gallileee/transit-raptor">source</a>
+    </footer>
+  </body>
+</html>
