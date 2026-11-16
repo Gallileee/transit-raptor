@@ -1,5 +1,36 @@
 # Progress log
 
+## 2026-11-16 (interactive): past Golemio's 100 departures
+
+Why: next step 1, picked by the user. Golemio's departureboards answers at most 100
+departures whatever `limit` asks (raw API: limit 50, 100, 101, 1000 gave 50, 100, 100, 100).
+At Anděl that is ~37 minutes of the hour journeys ask about.
+
+Found (raw API, Anděl, 11:39): the window goes by when vehicles are expected, the order by the
+timetable. A page from 12:07 began with a late vehicle of 11:56. Paging from the last
+scheduled time, with no overlap, got 198 of the 199 departures one request per stop gives.
+
+Done:
+- `GolemioRealtime`: a query wanting more than `PAGE` (100) asks again while answers are full,
+  from 5 minutes (`PAGE_OVERLAP`, for vehicles running early) before the last answer's last
+  scheduled time to a minute past the end; at most `MAX_PAGES` (5) requests; stops at the
+  limit, when a page doesn't move on (all one minute) or reaches the end. A departure on two
+  pages keeps the first. A failing page fails the whole (nothing half kept). The cache key
+  includes the limit.
+- Tests: 6 (pages and their parameters, overlap kept from the first, a full answer counted by
+  what was sent, one request when not full or at most 100 wanted, the limit / 5 pages / no
+  progress, a failing page). 245 unit tests.
+
+Verified:
+- Mutations, 11 of 11 caught (two survived first: a redundant `limit > 100` check, now gone,
+  and counting a full answer by what could be read, now tested).
+- Real key, against one request per stop: Anděl 202 of 202 in 3 requests, Karlovo náměstí 190
+  of 190 in 3, Florenc 155 of 155 in 2 (a few delays changed between the two askings).
+- Real journey questions (48 plans, 24 place pairs, lists and not): 19 had been cut at 100;
+  the biggest now gets 258 departures in 4 requests; none reached 5 pages. 44 stops at once
+  (797 departures) would: 5 pages give 220, as each page repeats ~5 minutes; journeys don't
+  ask that much.
+
 ## 2026-11-16 (interactive): a fallback for a cancelled ride
 
 Why: next step 1, picked by the user. A cancelled ride said so, but not how to go on; a search
@@ -978,9 +1009,7 @@ Mutation checks: without the filter or without the level penalty, one test each 
 
 ## Next steps (in order)
 
-1. Golemio answers at most 100 departures per request: split journey questions (by stop, or
-   by time) so rides 40-60 minutes ahead at the busiest stations get their delays too.
-2. Plan journeys themselves around trips live data say are cancelled (now only fallbacks do).
-3. Stops without a time in the feed: interpolate by distance (PID has none, so only for other
+1. Plan journeys themselves around trips live data say are cancelled (now only fallbacks do).
+2. Stops without a time in the feed: interpolate by distance (PID has none, so only for other
    feeds).
-4. compare-journeys takes ~25-45 s; profile it if it gets run often.
+3. compare-journeys takes ~25-45 s; profile it if it gets run often.

@@ -109,6 +109,122 @@ describe("GolemioRealtime", () => {
     expect((await golemio.departures(QUERY)).size).toBe(4);
     await expect(new GolemioRealtime(KEY, { baseUrl: "http://127.0.0.1:9" }).departures(QUERY)).rejects.toThrow("can't be reached");
   });
+
+  describe("past Golemio's 100 departures an answer", () => {
+    // A board of trips P0, P1, ... at stop A, one a minute from `start` (Prague time, as
+    // Golemio gives it), the way Golemio answers: at most 100, in timetable order.
+    const departure = (n: number, at: string) => ({
+      delay: { is_available: true, seconds: n },
+      stop: { id: "A" },
+      trip: { id: `P${n}`, is_canceled: false, is_at_stop: false },
+      departure_timestamp: { scheduled: `${at}+01:00` },
+    });
+    const minute = (base: string, n: number) => new Date(Date.parse(`${base}Z`) + n * 60_000).toISOString().slice(0, 19);
+    const START = "2026-11-10T07:43:00"; // a quarter of an hour before the board (07:58)
+    /** Departures every minute from START, up to `last` (a minute number): answers what is asked. */
+    const answering = (last: number, sameMinute = false) => (req: IncomingMessage) => {
+      const url = new URL(req.url!, base);
+      const from = Date.parse(`${url.searchParams.get("timeFrom")}Z`);
+      const lo = from - Number(url.searchParams.get("minutesBefore")) * 60_000;
+      const hi = from + Number(url.searchParams.get("minutesAfter")) * 60_000;
+      const all = Array.from({ length: last + 1 }, (_, n) => departure(n, sameMinute ? START : minute(START, n)));
+      const inside = all.filter((d) => {
+        const t = Date.parse(`${d.departure_timestamp.scheduled.slice(0, 19)}Z`);
+        return t >= lo && t <= hi;
+      });
+      const limit = Math.min(100, Number(url.searchParams.get("limit")));
+      return { status: 200, body: JSON.stringify({ departures: inside.slice(0, limit) }) };
+    };
+    const asked = () =>
+      requests.map((r) => {
+        const q = new URL(r.url!, base).searchParams;
+        return [q.get("timeFrom"), q.get("minutesBefore"), q.get("minutesAfter"), q.get("limit")];
+      });
+    const HOUR: LiveQuery = { stopIds: ["A"], from: "2026-11-10T07:58:00", before: 15, minutes: 120, limit: 1000 };
+
+    it("asks again from the last scheduled time while answers are full, going back a little", async () => {
+      // 07:43 to 09:58 every minute: 136 departures; the first answer ends at P99, 09:22.
+      reply = answering(135);
+      const live = await new GolemioRealtime(KEY, { baseUrl: base }).departures(HOUR);
+      expect(asked()).toEqual([
+        ["2026-11-10T07:58:00", "15", "120", "100"],
+        // From 09:17 (5 minutes before 09:22) to a minute past the end (09:58): 42 minutes.
+        ["2026-11-10T09:17:00", "0", "42", "100"],
+      ]);
+      expect(live.size).toBe(136);
+      expect(live.get(liveKey("P135", "A"))).toEqual({ delay: 135, canceled: false, atStop: false, platform: null });
+    });
+
+    it("counts a full answer by what Golemio sent, not by what could be read", async () => {
+      // P5 comes without a stop: 99 departures read, but the answer was full.
+      reply = (req) => {
+        const body = JSON.parse(answering(135)(req).body);
+        for (const d of body.departures) if (d.trip.id === "P5") d.stop = {};
+        return { status: 200, body: JSON.stringify(body) };
+      };
+      expect((await new GolemioRealtime(KEY, { baseUrl: base }).departures(HOUR)).size).toBe(135);
+      expect(requests).toHaveLength(2);
+    });
+
+    it("keeps what the first page said about a departure on two pages", async () => {
+      let second = false;
+      reply = (req) => {
+        const answer = answering(135)(req);
+        if (!second) {
+          second = true;
+          return answer;
+        }
+        const body = JSON.parse(answer.body);
+        for (const d of body.departures) d.delay.seconds = 999;
+        return { status: 200, body: JSON.stringify(body) };
+      };
+      const live = await new GolemioRealtime(KEY, { baseUrl: base }).departures(HOUR);
+      expect([live.get(liveKey("P99", "A"))!.delay, live.get(liveKey("P100", "A"))!.delay]).toEqual([99, 999]);
+    });
+
+    it("asks once when the answer isn't full, or no more than 100 are wanted", async () => {
+      reply = answering(99); // exactly 100, full, but the window ends at the last one
+      expect((await new GolemioRealtime(KEY, { baseUrl: base }).departures({ ...HOUR, minutes: 99 - 15 })).size).toBe(100);
+      expect(asked()).toHaveLength(1);
+      requests = [];
+      reply = answering(60);
+      expect((await new GolemioRealtime(KEY, { baseUrl: base }).departures(HOUR)).size).toBe(61);
+      requests = [];
+      reply = answering(300);
+      const golemio = new GolemioRealtime(KEY, { baseUrl: base });
+      expect((await golemio.departures({ ...HOUR, limit: 100 })).size).toBe(100);
+      expect(asked()).toEqual([["2026-11-10T07:58:00", "15", "120", "100"]]);
+      // The same first request, with more wanted: not the answer kept for 100. (137: the page
+      // after goes a minute past the end, to 09:59.)
+      expect((await golemio.departures(HOUR)).size).toBe(137);
+      expect(asked()).toHaveLength(3);
+    });
+
+    it("stops at the limit, after 5 pages, or when the pages don't move on", async () => {
+      reply = answering(2000);
+      // A day of departures: two pages give 194, past the 150 wanted.
+      expect((await new GolemioRealtime(KEY, { baseUrl: base }).departures({ ...HOUR, minutes: 24 * 60, limit: 150 })).size).toBe(194);
+      expect(asked()).toHaveLength(2);
+      requests = [];
+      const day = await new GolemioRealtime(KEY, { baseUrl: base }).departures({ ...HOUR, minutes: 24 * 60 });
+      expect(asked()).toHaveLength(5);
+      expect(day.size).toBe(100 + 4 * 94); // each later page repeats 6 (5 minutes back, and its first)
+      requests = [];
+      reply = answering(300, true); // all at 07:43
+      expect((await new GolemioRealtime(KEY, { baseUrl: base }).departures(HOUR)).size).toBe(100);
+      expect(asked()).toHaveLength(2);
+    });
+
+    it("fails as a whole when a later page fails, and keeps nothing", async () => {
+      const golemio = new GolemioRealtime(KEY, { baseUrl: base });
+      reply = (req) => (requests.length === 1 ? answering(135)(req) : { status: 429, body: "{}" });
+      await expect(golemio.departures(HOUR)).rejects.toThrow("HTTP 429");
+      requests = [];
+      reply = answering(135);
+      expect((await golemio.departures(HOUR)).size).toBe(136);
+      expect(requests).toHaveLength(2);
+    });
+  });
 });
 
 /** A source that answers from a map and remembers what it was asked. */

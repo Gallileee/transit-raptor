@@ -247,7 +247,8 @@ timetable and says so (logged at most once a minute). The key is sent only in th
 the repository, e.g. in a gitignored `.env` file.
 
 Journeys get them too: every ride leaving within the next hour shows its delay where one gets
-on ("+3 min" under its time; one question to Golemio for all those stops), a cancelled ride says
+on ("+3 min" under its time; one question to Golemio for all those stops, asked in pages of
+100, the most Golemio answers at once, up to 5), a cancelled ride says
 so, and a change is marked as at risk when the vehicle before, taken to stay as late as it is
 now, arrives after the next one leaves (as late as that one is), walk included. The
 journeys themselves are still planned on the timetable. Under a change at risk the page says
