@@ -197,8 +197,22 @@ export interface PlanResponse {
   journeys: JourneyJson[];
   /** Live delays on the rides of the next hour: as for departure boards. */
   live: "on" | "off" | "error";
+  /**
+   * Rides live data said are cancelled, in the journeys first found: the journeys were planned
+   * again without them (up to REPLANS times). Empty without live data.
+   */
+  avoided: AvoidedJson[];
   /** The timetable that answered: after a reload the page sees the new one. */
   feed: FeedInfo;
+}
+
+/** A cancelled ride a search went around. */
+export interface AvoidedJson {
+  mode: string;
+  line: string;
+  headsign: string;
+  from: StopJson;
+  departure: string;
 }
 
 export interface DeparturesRequest {
@@ -260,6 +274,11 @@ const LIVE_WITHIN = 5 * 60;
 const LATE_LOOKBACK = 15 * 60;
 /** Rides of a journey get live delays when they leave this soon (vehicles not yet out don't report). */
 const JOURNEY_HORIZON = 60 * 60;
+/**
+ * Searches again without the cancelled rides found, at most this many times: each new search
+ * may board other trips, asked about in turn (their stops may not have been asked yet).
+ */
+const REPLANS = 2;
 
 /** What `checkForNewFeed` did. */
 export type ReloadResult = "unchanged" | "waiting" | "reloaded" | "failed" | "busy";
@@ -548,8 +567,26 @@ export class Planner {
     const query = { from: from.stops, to: to.stops, departAt, maxTransfers, window: window * 60 };
     const stepFree = request.stepFree === true;
     const timetable = stepFree ? loaded.stepFreeTimetable() : loaded.timetable;
-    const journeys = request.list ? profile(timetable, query) : plan(timetable, query);
-    const { known, state } = await this.liveForJourneys(date, journeys, loaded.feed);
+    // Planned on the timetable, then asked about live; rides found cancelled are planned around
+    // (the trips skipped), and the new journeys asked about in turn.
+    const skip = new Set<string>();
+    const avoided: AvoidedJson[] = [];
+    let journeys: Journey[];
+    let live: { known: ReadonlyMap<string, LiveDeparture>; state: PlanResponse["live"] };
+    for (let round = 0; ; round++) {
+      const search = { ...query, skip };
+      journeys = request.list ? profile(timetable, search) : plan(timetable, search);
+      live = await this.liveForJourneys(date, journeys, loaded.feed);
+      if (round >= REPLANS) break;
+      // Skipped trips can't come back, so these are new.
+      const cancelled = cancelledRides(loaded, journeys, live.known);
+      if (cancelled.length === 0) break;
+      for (const c of cancelled) {
+        skip.add(c.tripId);
+        avoided.push(c.json);
+      }
+    }
+    const { known, state } = live;
     return {
       from: from.name,
       to: to.name,
@@ -558,10 +595,11 @@ export class Planner {
       stepFree,
       journeys: journeys.map((j) => {
         const json = journeyJson(loaded, j, timetable, known);
-        const fallback = fallbackFor(loaded, j, json, timetable, known, { from: from.stops, to: to.stops, maxTransfers });
+        const fallback = fallbackFor(loaded, j, json, timetable, known, { from: from.stops, to: to.stops, maxTransfers, skip });
         return fallback ? { ...json, fallback } : json;
       }),
       live: state,
+      avoided,
       feed: loaded.info,
     };
   }
@@ -657,7 +695,7 @@ export function fallbackFor(
   json: JourneyJson,
   timetable: Timetable,
   live: ReadonlyMap<string, LiveDeparture>,
-  query: { from: number[]; to: number[]; maxTransfers: number },
+  query: { from: number[]; to: number[]; maxTransfers: number; skip?: ReadonlySet<string> },
 ): FallbackJson | undefined {
   const leg = json.legs.findIndex((l) => l.kind === "ride" && (l.canceled || l.changeAtRisk));
   if (leg < 0) return undefined;
@@ -678,7 +716,7 @@ export function fallbackFor(
     from = { ...stopJson(loaded.feed, journey.legs[0]!.from), platform: "" };
     departAt = journey.departure;
   }
-  const skip = new Set<string>();
+  const skip = new Set<string>(query.skip);
   for (const [key, known] of live) if (known.canceled) skip.add(key.slice(0, key.lastIndexOf("|")));
   // Of the journeys from there (fewer changes, or earlier), the one that arrives first.
   const best = plan(timetable, { from: start, to: query.to, departAt, maxTransfers: query.maxTransfers, skip }).at(-1);
@@ -690,6 +728,29 @@ export function fallbackFor(
     journey: best ? journeyJson(loaded, best, timetable, live) : null,
     later: best ? minutesBetween(journey.arrival, best.arrival) : null,
   };
+}
+
+/** The rides of these journeys that live data say are cancelled, each trip once. */
+export function cancelledRides(loaded: Loaded, journeys: Journey[], live: ReadonlyMap<string, LiveDeparture>) {
+  const found = new Map<string, { tripId: string; json: AvoidedJson }>();
+  for (const journey of journeys) {
+    for (const leg of journey.legs) {
+      if (leg.kind !== "ride") continue;
+      if (!live.get(liveKey(leg.tripId, loaded.feed.stops[leg.from]!.id))?.canceled) continue;
+      const route = loaded.feed.routes.get(leg.routeId);
+      found.set(leg.tripId, {
+        tripId: leg.tripId,
+        json: {
+          mode: route ? (MODES[route.type] ?? "line") : "line",
+          line: route?.shortName || route?.longName || leg.routeId,
+          headsign: leg.headsign,
+          from: stopJson(loaded.feed, leg.from),
+          departure: formatClock(leg.departure),
+        },
+      });
+    }
+  }
+  return [...found.values()];
 }
 
 function legJson(

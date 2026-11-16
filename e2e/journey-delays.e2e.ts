@@ -129,3 +129,32 @@ test("says how to go on without a cancelled ride", async ({ page }) => {
   );
   await expect(ride.getByRole("link", { name: "Search from there" })).toHaveAttribute("href", /from=Alpha&.*time=08%3A00&window=0/);
 });
+
+test("says which cancelled trips the journeys were planned around, and only for that search", async ({ page }) => {
+  const bus300 = { mode: "bus", line: "300", headsign: "Delta, Náměstí", from: { name: "Alpha", platform: "", lat: 50, lon: 14 }, departure: "08:05" };
+  let avoided: unknown[] = [bus300];
+  await answerWith(page, (body) => {
+    body.live = "on";
+    body.avoided = avoided;
+  });
+  await page.goto(search);
+  await expect(page.locator("#avoided")).toHaveText("Planned around a cancelled trip: bus 300 at 08:05 from Alpha.");
+  avoided = [
+    ...avoided,
+    { mode: "bus", line: "200", headsign: "Delta, Náměstí", from: { name: "Bravo", platform: "2", lat: 50, lon: 14 }, departure: "08:08" },
+  ];
+  await page.getByRole("button", { name: "Find journeys" }).click();
+  await expect(page.locator("#avoided")).toHaveText("Planned around 2 cancelled trips: bus 300 at 08:05 from Alpha, bus 200 at 08:08 from Bravo (2).");
+  avoided = [];
+  await page.getByRole("button", { name: "Find journeys" }).click();
+  await expect(page.getByRole("status")).toContainText("2 journeys");
+  await expect(page.locator("#avoided")).toBeHidden();
+  // A search that fails doesn't leave the last one's note either.
+  avoided = [bus300];
+  await page.getByRole("button", { name: "Find journeys" }).click();
+  await expect(page.locator("#avoided")).toBeVisible();
+  await page.getByLabel("From", { exact: true }).fill("Nowhere at all");
+  await page.getByRole("button", { name: "Find journeys" }).click();
+  await expect(page.getByRole("status")).toContainText("no stop called");
+  await expect(page.locator("#avoided")).toBeHidden();
+});

@@ -251,7 +251,10 @@ on ("+3 min" under its time; one question to Golemio for all those stops, asked 
 100, the most Golemio answers at once, up to 5), a cancelled ride says
 so, and a change is marked as at risk when the vehicle before, taken to stay as late as it is
 now, arrives after the next one leaves (as late as that one is), walk included. The
-journeys themselves are still planned on the timetable. Under a change at risk the page says
+journeys are planned on the timetable, then around the rides live data say are cancelled: the
+search runs again without those trips (up to twice more, asking about the new journeys' rides
+too), and the page says which it went around ("Planned around a cancelled trip: metro B at
+12:21 from Florenc (1)."; `avoided` in `/api/plan`). Under a change at risk the page says
 how to go on if it is missed: the server searches again from where the late vehicle leaves
 one, from when it is expected there, and gives the journey that arrives first ("If you miss
 it: metro C at 22:50 from I. P. Pavlova (1), arriving 23:03 (10 min later)", with a link that

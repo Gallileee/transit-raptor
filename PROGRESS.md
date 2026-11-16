@@ -1,5 +1,35 @@
 # Progress log
 
+## 2026-11-16 (interactive): journeys planned around cancelled trips
+
+Why: next step 1, picked by the user. A journey could still lead with a ride that won't run;
+only its fallback went around it.
+
+Done:
+- `Planner.plan`: after asking about the journeys' rides, the trips live data say are
+  cancelled are skipped (`Query.skip`, from #35) and the search runs again, at most `REPLANS`
+  (2) more times; each new set of journeys is asked about in turn (its rides may board at stops
+  not asked yet). Without live data, nothing changes. Fallbacks skip those trips too, even when
+  the last question no longer mentions them.
+- `PlanResponse.avoided`: the rides gone around (mode, line, headsign, from, departure), each
+  trip once (`cancelledRides`). Page: "Planned around a cancelled trip: ..." under the status,
+  cleared by the next search, a failed one too.
+- A cancelled ride can still show (with its fallback) when the searches run out, or for rides
+  over an hour ahead (no live data for them); the fallback tests now give fallbackFor the
+  timetable's journeys directly.
+- Tests: around one, around a chain (the 08:08 and then the 08:18 bus), nothing to avoid,
+  lists, a trip once, a fallback skipping a trip known from an earlier round; the page's
+  note. 250 unit, 38 browser.
+
+Verified:
+- Mutations, 10 of 10 caught (REPLANS 0 and 1, no skip in the search, any live entry counted
+  as cancelled, nothing listed, the fallback without the earlier skips, the page's reset, call
+  and wording). Three survived first: two got tests, one was a redundant check (the map keyed by
+  trip already lists each once), now removed.
+- Real key (a real trip marked cancelled in the real live data; Golemio had none): Kobylisy ->
+  Anděl 12:05, metro B 12:21 at Florenc cancelled: planned again to metro B 12:25 -> Anděl
+  12:33, IDOS's next one after 12:21; 2 questions to Golemio.
+
 ## 2026-11-16 (interactive): past Golemio's 100 departures
 
 Why: next step 1, picked by the user. Golemio's departureboards answers at most 100
@@ -1009,7 +1039,7 @@ Mutation checks: without the filter or without the level penalty, one test each 
 
 ## Next steps (in order)
 
-1. Plan journeys themselves around trips live data say are cancelled (now only fallbacks do).
-2. Stops without a time in the feed: interpolate by distance (PID has none, so only for other
+1. Stops without a time in the feed: interpolate by distance (PID has none, so only for other
    feeds).
-3. compare-journeys takes ~25-45 s; profile it if it gets run often.
+2. compare-journeys takes ~25-45 s; profile it if it gets run often.
+3. Draw a fallback journey on the map when it is picked (now text and a search link only).
