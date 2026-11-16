@@ -475,3 +475,11 @@ select:focus-visible,
   grid-column: 2 / -1;
   font-size: 0.85rem;
 }
+
+/* Cancelled trips the journeys were planned around. */
+.avoided {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border-left: 3px solid var(--muted);
+  font-size: 0.9rem;
+}

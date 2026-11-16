@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { type LiveDeparture, type LiveQuery, liveKey, type Realtime, RealtimeError } from "../src/realtime.js";
 import { plan } from "../src/raptor.js";
-import { fallbackFor, journeyJson, type LegJson, Planner } from "../src/service.js";
+import { cancelledRides, fallbackFor, journeyJson, type LegJson, Planner } from "../src/service.js";
 
 const MINI = join(import.meta.dirname, "fixtures", "mini");
 
@@ -109,9 +109,51 @@ describe("live delays in journeys", () => {
     expect(direct![0]!.from.platform).toBe(""); // nothing live for it
   });
 
-  it("says when a ride is cancelled", async () => {
-    const { rides } = await journeys(new Map([late("L3express", "A", 0, true)]));
-    expect(summary(rides)[0]).toEqual([["300", 0, true, false]]);
+  describe("plans around rides live data say are cancelled", () => {
+    const trips = (answer: { journeys: { legs: LegJson[] }[] }) =>
+      answer.journeys.map((j) => j.legs.filter((l): l is Ride => l.kind === "ride").map((r) => `${r.line} ${r.departure}`));
+
+    it("searches again without them, and says which", async () => {
+      // Bus 300 at 08:05 cancelled: the slow one at 08:00 instead, direct.
+      const { answer, fake } = await journeys(new Map([late("L3express", "A", 0, true)]));
+      expect(trips(answer)).toEqual([["300 08:00"], ["1 08:00", "200 08:08"]]);
+      expect(answer.avoided).toEqual([
+        { mode: "bus", line: "300", headsign: "Delta, Náměstí", from: expect.objectContaining({ name: "Alpha" }), departure: "08:05" },
+      ]);
+      expect(answer.journeys.flatMap((j) => j.legs).some((l) => l.kind === "ride" && l.canceled)).toBe(false);
+      expect(fake!.asked).toHaveLength(2); // the new journeys asked about too
+    });
+
+    it("goes around the ones the new journeys meet as well", async () => {
+      // Bus 200 at 08:08 cancelled, then the 08:18 one: via Bravo is gone; bus 300 is left.
+      const { answer, fake } = await journeys(new Map([late("L2a", "B2", 0, true), late("L2b", "B2", 0, true)]));
+      expect(trips(answer)).toEqual([["300 08:05"]]);
+      expect(answer.avoided.map((a) => `${a.line} ${a.departure}`)).toEqual(["200 08:08", "200 08:18"]);
+      expect(fake!.asked).toHaveLength(3);
+    });
+
+    it("says nothing was avoided when nothing is cancelled, or there is no live data", async () => {
+      const { answer, fake } = await journeys(new Map([late("L1a", "A", 60)]));
+      expect([answer.avoided, fake!.asked.length]).toEqual([[], 1]);
+      expect((await journeys(undefined)).answer.avoided).toEqual([]);
+      expect((await journeys(new RealtimeError("HTTP 503"))).answer.avoided).toEqual([]);
+    });
+
+    it("lists a trip once, though several journeys take it", async () => {
+      const planner = new Planner(MINI, () => new Date(2026, 10, 10, 7, 58));
+      const loaded = await planner.load({ year: 2026, month: 11, day: 10 });
+      const [a, b2, d] = ["A", "B2", "D"].map((id) => loaded.feed.stopById.get(id)!);
+      const viaBravo = plan(loaded.timetable, { from: [a!], to: [d!], departAt: 8 * 3600, maxTransfers: 4 })[1]!;
+      const fromBravo = plan(loaded.timetable, { from: [b2!], to: [d!], departAt: 8 * 3600, maxTransfers: 4 })[0]!;
+      const found = cancelledRides(loaded, [viaBravo, fromBravo], new Map([late("L2a", "B2", 0, true)]));
+      expect(found.map((c) => [c.tripId, c.json.line, c.json.departure])).toEqual([["L2a", "200", "08:08"]]);
+    });
+
+    it("plans around them in a list of journeys too", async () => {
+      const { answer } = await journeys(new Map([late("L1a", "A", 0, true)]), undefined, { list: true, window: 15 });
+      expect(trips(answer).flat()).not.toContain("1 08:00");
+      expect(answer.avoided.map((a) => `${a.line} ${a.departure}`)).toEqual(["1 08:00"]);
+    });
   });
 
   it("only asks for rides leaving within the next hour, on the day of the journey", async () => {
@@ -206,10 +248,22 @@ describe("live delays in journeys", () => {
       ]);
     });
 
+    // A cancelled ride is planned around (above), so the journeys the planner returns don't have
+    // one while it can search again; these give fallbackFor the journeys of the timetable.
+    const timetableFallbacks = async (live: Map<string, LiveDeparture>, from = "alpha", skip?: Set<string>) => {
+      const planner = new Planner(MINI, () => new Date(2026, 10, 10, 7, 58));
+      const loaded = await planner.load({ year: 2026, month: 11, day: 10 });
+      const match = loaded.index.find(from);
+      const query = { from: match.kind === "found" ? match.stops : [], to: [loaded.feed.stopById.get("D")!], maxTransfers: 4, ...(skip ? { skip } : {}) };
+      return plan(loaded.timetable, { ...query, departAt: 8 * 3600 }).map((j) =>
+        fallbackFor(loaded, j, journeyJson(loaded, j, loaded.timetable, live), loaded.timetable, live, query),
+      );
+    };
+
     it("goes on without a cancelled ride, from where the ride before leaves one", async () => {
       // Bus 200 at 08:08 cancelled, tram 1 on time at Bravo (1) 08:05: the 08:18 bus, not the
       // cancelled one, though there would be time for it.
-      const [direct, viaBravo] = await fallbackOf(new Map([late("L1a", "A", 0), late("L2a", "B2", 0, true)]));
+      const [direct, viaBravo] = await timetableFallbacks(new Map([late("L1a", "A", 0), late("L2a", "B2", 0, true)]));
       expect(direct).toBeUndefined();
       expect({ ...viaBravo!, journey: rides(viaBravo!.journey) }).toEqual({
         leg: 2,
@@ -220,13 +274,13 @@ describe("live delays in journeys", () => {
         later: 10,
       });
       // Late and cancelled: the cancellation is the reason.
-      const [, both] = await fallbackOf(new Map([late("L1a", "A", 150), late("L2a", "B2", 0, true)]));
+      const [, both] = await timetableFallbacks(new Map([late("L1a", "A", 150), late("L2a", "B2", 0, true)]));
       expect([both!.reason, both!.at, rides(both!.journey)]).toEqual(["canceled", "08:07", [["200", "Bravo (2)", "08:18", "08:25", null]]]);
     });
 
     it("goes on from where the journey starts when its first ride is cancelled", async () => {
       // Bus 300 at 08:05 cancelled: from Alpha at 08:05, tram 1 at 08:10 and bus 200, at 08:25.
-      const [direct] = await fallbackOf(new Map([late("L3express", "A", 0, true)]));
+      const [direct] = await timetableFallbacks(new Map([late("L3express", "A", 0, true)]));
       expect({ ...direct!, journey: rides(direct!.journey) }).toEqual({
         leg: 0,
         reason: "canceled",
@@ -239,14 +293,19 @@ describe("live delays in journeys", () => {
         later: -5,
       });
       // The place searched from, not the platform of the cancelled ride (bus 200 at Bravo (2)).
-      const fromBravo = await journeys(new Map([late("L2a", "B2", 0, true)]), undefined, { from: "bravo" });
-      const fallback = fromBravo.answer.journeys[0]!.fallback!;
+      const fallback = (await timetableFallbacks(new Map([late("L2a", "B2", 0, true)]), "bravo"))[0]!;
       expect([fallback.from.name, fallback.from.platform, fallback.at, rides(fallback.journey)]).toEqual([
         "Bravo",
         "",
         "08:08",
         [["200", "Bravo (2)", "08:18", "08:25", null]],
       ]);
+    });
+
+    it("doesn't take a trip planned around, though the live data asked last don't mention it", async () => {
+      // As above, but bus 200 at 08:18 is known cancelled only from an earlier search round.
+      const [, viaBravo] = await timetableFallbacks(new Map([late("L1a", "A", 150)]), "alpha", new Set(["L2b"]));
+      expect(rides(viaBravo!.journey)!.map((r) => `${r[0]} ${r[2]}`)).toEqual(["1 08:15", "300 08:20"]);
     });
 
     it("for a cancelled first ride, searches from any stop the search could start at", async () => {

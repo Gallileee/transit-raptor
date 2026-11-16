@@ -88,6 +88,7 @@ async function search() {
 
   setStatus("Searching…");
   $("notice").hidden = true;
+  $("avoided").hidden = true;
   suggestionsBox.hidden = true;
   results.replaceChildren();
   drawn.clearLayers();
@@ -110,6 +111,7 @@ async function search() {
   searchDate = body.date;
   destination = body.to;
   showFeed(body.feed);
+  showAvoided(body.avoided ?? []);
   const ms = Math.round(performance.now() - started);
   if (journeys.length === 0) {
     const outside = feed.firstDate && (body.date < feed.firstDate || body.date > feed.lastDate);
@@ -126,6 +128,16 @@ async function search() {
   setStatus(`${body.from} → ${body.to}, ${body.date}: ${journeys.length}${kind} journey${journeys.length > 1 ? "s" : ""} (${ms} ms)${live}`);
   results.replaceChildren(...journeys.map(journeyItem));
   select(0);
+}
+
+/** Rides live data said are cancelled, which the journeys shown were planned around. */
+function showAvoided(avoided) {
+  const box = $("avoided");
+  box.hidden = avoided.length === 0;
+  if (box.hidden) return;
+  const what = avoided.length === 1 ? "a cancelled trip" : `${avoided.length} cancelled trips`;
+  const list = avoided.map((a) => `${a.mode} ${a.line} at ${a.departure} from ${stopName(a.from)}`).join(", ");
+  box.textContent = `Planned around ${what}: ${list}.`;
 }
 
 /**
