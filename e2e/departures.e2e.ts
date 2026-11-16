@@ -39,17 +39,54 @@ test("counts down, drops what has left, and asks again every 30 s", async ({ pag
   await expect(rows(page)).toHaveCount(5);
   expect(asked).toEqual(["07:58"]);
 
-  // Each refresh is planned 30 s after the previous answer, so a little later each time.
+  // Each refresh is planned 30 s after the previous answer, so a little later each time. The
+  // clock may only move on once the answer is in ("Updated" changes as the next one is
+  // planned): moved while the request is still out, it would pass the 30 s before they start.
+  const updated = page.locator("#updated");
+  const answered = async (before: string) => expect(updated).not.toHaveText(before);
+  let last = (await updated.textContent())!;
   await page.clock.runFor(31_000); // 07:58:31
   await expect.poll(() => asked).toEqual(["07:58", "07:58"]);
+  await answered(last);
+  last = (await updated.textContent())!;
   await page.clock.runFor(31_000); // 07:59:02: the countdown has moved
   await expect.poll(() => asked).toEqual(["07:58", "07:58", "07:59"]);
+  await answered(last);
   await expect(rows(page).first().locator(".in")).toHaveText("1 min");
 
   await page.clock.runFor(90_000); // 08:00:32: the 08:00 departures leave now
   await expect(rows(page).first().locator(".in")).toHaveText("now");
   await page.clock.runFor(60_000); // 08:01:32: they're gone
   await expect(rows(page).first().locator(".time")).toHaveText("08:05");
+});
+
+test("plans the next refresh from when an answer comes, not when it was asked for", async ({ page }) => {
+  const asked: string[] = [];
+  page.on("request", (r) => {
+    if (r.url().includes("/api/departures")) asked.push(new URL(r.url()).searchParams.get("time")!);
+  });
+  // The second answer is held until the test lets it go, as a slow server would.
+  let release = () => {};
+  const held = new Promise<void>((resolve) => (release = resolve));
+  await page.route("**/api/departures?*", async (route) => {
+    const response = await route.fetch();
+    if (asked.length === 2) await held;
+    await route.fulfill({ response });
+  });
+  await page.goto("/departures?stop=alpha");
+  await expect(rows(page)).toHaveCount(5);
+  const updated = page.locator("#updated");
+  const first = (await updated.textContent())!;
+  await page.clock.runFor(31_000); // 07:58:31: the second request goes out, and hangs
+  await expect.poll(() => asked).toEqual(["07:58", "07:58"]);
+  await page.clock.runFor(31_000); // 07:59:02: 30 s after it was asked for, but no answer yet
+  expect(asked).toEqual(["07:58", "07:58"]);
+  release();
+  await expect(updated).not.toHaveText(first); // answered at 07:59:02
+  await page.clock.runFor(20_000); // 07:59:22: not yet 30 s since the answer (room for a slow test)
+  expect(asked).toHaveLength(2);
+  await page.clock.runFor(12_000); // 07:59:34
+  await expect.poll(() => asked).toEqual(["07:58", "07:58", "07:59"]);
 });
 
 test("keeps counting down while the server doesn't answer", async ({ page }) => {

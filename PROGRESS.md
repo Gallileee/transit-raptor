@@ -1,5 +1,29 @@
 # Progress log
 
+## 2026-11-16 (interactive): the departures board's flaky countdown test
+
+Why: next step 3, picked by the user. "counts down, drops what has left, and asks again every
+30 s" failed twice in full local runs and never alone.
+
+Found: the board plans its next refresh 30 s after an answer comes in. The test moved the
+page's clock on as soon as the refresh request had gone out; when the answer came after that
+(a busy machine), the 30 s started after the clock had already moved, and the third request the
+test waited for never came. It didn't fail in 40 + 3 x 6 loaded runs, but holding the second
+answer 1.5 s made it fail every time: the page was right, the test wasn't.
+
+Done:
+- The test waits for "Updated" to change (written in the same step as the next refresh is
+  planned) before moving the clock on.
+- New test: the second answer is held until the test lets it go; no refresh 30 s after the
+  request, one 30 s after the answer. It fails if the page plans from the request (checked).
+- Other clock tests: the board drops what has left by the clock at each drawing, so a late
+  answer can't bring it back; the planned board asks nothing.
+
+Verified:
+- departures tests 10 x 9 (90) with 12 and 16 workers; the whole suite 3 x 5 (195 each),
+  all passed. With 24 workers, 3 of 195 timed out in goto/click (30 s, other tests): the
+  machine overloaded with 24 browsers, not a race.
+
 ## 2026-11-16 (interactive): a faster planner, and compare-journeys in parallel
 
 Why: next step, picked by the user. compare-journeys took ~39 s for 2,000 queries on PID.
@@ -1074,5 +1098,3 @@ Mutation checks: without the filter or without the level penalty, one test each 
 1. Draw a fallback journey on the map when it is picked (now text and a search link only).
 2. Stops without a time in the feed: interpolate by distance (PID has none, so only for other
    feeds).
-3. The departures board's countdown browser test failed once in a full run (passes alone and
-   on rerun): find what races.
