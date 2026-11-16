@@ -33,9 +33,9 @@ describe("passed stops", () => {
   });
 
   it("gives a stop without a time in the feed the time it was filled in with", async () => {
-    // L9a: Charlie 08:20, Bravo (2) with no times, Foxtrot North 08:25.
+    // L9a: Charlie 08:20, Bravo (2) with no times (08:21:15, by distance), Foxtrot North 08:25.
     const [ride] = (await rides(planner, "Charlie", "Foxtrot North", "08:20")).flat();
-    expect(ride).toMatchObject({ line: "9", passed: [{ name: "Bravo", platform: "2", arrival: "08:20" }] });
+    expect(ride).toMatchObject({ line: "9", passed: [{ name: "Bravo", platform: "2", arrival: "08:21" }] });
   });
 
   describe("a stop the vehicle only drives past", () => {

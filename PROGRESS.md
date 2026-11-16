@@ -1,5 +1,37 @@
 # Progress log
 
+## 2026-11-16 (interactive): times for stops the feed gives none
+
+Why: next step, picked by the user. Stops without times took the previous stop's departure,
+"never too early" said the comment; for getting off there it is the earliest the vehicle could
+be there, so a change could look possible when it isn't. GTFS asks for interpolation.
+
+Done:
+- `interpolateTimes` (gtfs.ts): each stretch of untimed stops between two timed ones gets times
+  in proportion to the distance from the stop before: `shape_dist_traveled` where every stop
+  of the stretch has it and it doesn't go back, else straight lines; equal steps if the stops
+  are all in one place. After the last timed stop, or before a time that goes back: the last
+  departure, as before. Whole seconds. The first stop must still be timed (the trip's error).
+- Cache FORMAT 4 (cached feeds hold the filled-in times).
+- Tests: interpolate.test.ts (11: straight lines, shape distances and when not to use them,
+  from where the shape starts, stretches, one place, rounding, after the last time, a wait at
+  the stop before, only the trip's own times, the first stop's error). Three tests expected
+  the old fill-in at the test feed's Bravo (2) (08:20 -> 08:21:15). 263 unit, 39 browser.
+
+Verified:
+- PID times every stop: compare-journeys against main, 2,000 of 2,000 identical.
+- On PID's real times (a fifth of the trips), blanked and filled again, error against the
+  published times:
+
+  | kept | shape distances | straight lines | before (previous departure) |
+  |---|---|---|---|
+  | every other stop | median 15 s, p90 43 s; 1.3% over a minute early | 16 s, 47 s; 2.1% | 60 s, 180 s; 46.6% over a minute early |
+  | every third stop | 18 s, 50 s; 2.3% | 20 s, 57 s; 3.6% | 120 s, 240 s; 71.7% |
+
+- Mutations, 9 of 10 caught; one survived first (distances not counted from the stretch's
+  start: the test's shape began at 0), now tested; the one left (filling a trip already
+  marked as an error) changes nothing used.
+
 ## 2026-11-16 (interactive): the departures board's flaky countdown test
 
 Why: next step 3, picked by the user. "counts down, drops what has left, and asks again every
@@ -1096,5 +1128,5 @@ Mutation checks: without the filter or without the level penalty, one test each 
 ## Next steps (in order)
 
 1. Draw a fallback journey on the map when it is picked (now text and a search link only).
-2. Stops without a time in the feed: interpolate by distance (PID has none, so only for other
-   feeds).
+2. Try another feed with untimed stops (needs a download: ask first), now that they are
+   interpolated.

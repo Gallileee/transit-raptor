@@ -40,7 +40,7 @@ import {
 } from "./gtfs.js";
 import { Shapes } from "./shapes.js";
 
-export const FORMAT = 3;
+export const FORMAT = 4;
 const MAGIC = Buffer.from("TRCACHE\0", "latin1");
 const PREFIX = 24;
 
