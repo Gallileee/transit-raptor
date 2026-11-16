@@ -71,6 +71,8 @@ export interface Query {
    * default) the journeys leave as early as possible from departAt.
    */
   readonly window?: number;
+  /** Trips (GTFS trip_id) not to take: cancelled ones, from live data. */
+  readonly skip?: ReadonlySet<string>;
 }
 
 const NONE = 0;
@@ -128,6 +130,7 @@ export function earliestTrip(tt: Timetable, p: number, position: number, time: n
 export class Search {
   private readonly rounds: Labels[];
   private readonly targets: Set<number>;
+  private readonly skip: ReadonlySet<string> | undefined;
 
   constructor(
     private readonly tt: Timetable,
@@ -136,6 +139,16 @@ export class Search {
     const n = tt.feed.stops.length;
     this.rounds = Array.from({ length: query.maxTransfers + 2 }, () => labels(n));
     this.targets = new Set(query.to);
+    this.skip = query.skip && query.skip.size > 0 ? query.skip : undefined;
+  }
+
+  /** The earliest trip to catch, as earliestTrip, passing over trips not to take. */
+  private catchable(p: number, position: number, time: number): number {
+    let trip = earliestTrip(this.tt, p, position, time);
+    if (!this.skip) return trip;
+    const trips = this.tt.patterns[p]!.trips;
+    while (trip >= 0 && this.skip.has(trips[trip]!.id)) trip = trip + 1 < trips.length ? trip + 1 : -1;
+    return trip;
   }
 
   run(departAt: number): Journey[] {
@@ -214,7 +227,7 @@ export class Search {
           // Could an earlier trip be caught here, having arrived in the previous round?
           const ready = previous.arrival[stop]!;
           if (pattern.canBoard[i] && ready < Infinity && (trip < 0 || ready <= departure(pattern, trip, i))) {
-            const earlier = earliestTrip(tt, p, i, ready);
+            const earlier = this.catchable(p, i, ready);
             if (earlier >= 0 && (trip < 0 || earlier < trip)) {
               trip = earlier;
               boardPosition = i;

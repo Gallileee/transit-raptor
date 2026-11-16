@@ -105,3 +105,27 @@ test("says when nothing goes on from where the late vehicle leaves one", async (
   await page.goto(search);
   await expect(page.locator(".fallback")).toHaveText("If you miss it: nothing more from Bravo (1) today. Search from there");
 });
+
+test("says how to go on without a cancelled ride", async ({ page }) => {
+  await answerWith(page, (body) => {
+    body.live = "on";
+    const direct = body.journeys[0];
+    direct.legs[0].canceled = true;
+    direct.legs[0].delay = 0;
+    direct.fallback = {
+      leg: 0,
+      reason: "canceled",
+      from: direct.legs[0].from,
+      at: "08:05",
+      journey: body.journeys[1],
+      later: -15,
+    };
+  });
+  await page.goto(search);
+  const ride = journeys(page).first().locator(".leg").first();
+  await expect(ride.locator(".risk")).toHaveText("bus 300 at 08:05 is canceled");
+  await expect(ride.locator(".fallback")).toHaveText(
+    "Instead: tram 1 at 08:00 from Alpha, then bus 200 at 08:08 from Bravo (2), arriving 08:15. Search from there",
+  );
+  await expect(ride.getByRole("link", { name: "Search from there" })).toHaveAttribute("href", /from=Alpha&.*time=08%3A00&window=0/);
+});

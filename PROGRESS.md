@@ -1,5 +1,37 @@
 # Progress log
 
+## 2026-11-16 (interactive): a fallback for a cancelled ride
+
+Why: next step 1, picked by the user. A cancelled ride said so, but not how to go on; a search
+from its stop at its time would have boarded it again.
+
+Done:
+- RAPTOR: `Query.skip` (GTFS trip ids). Boarding passes over them to the next trip of the
+  pattern (`Search.catchable`); without it nothing changes (compare-journeys against main:
+  1,000 of 1,000 identical).
+- `fallbackFor` takes the first ride that is cancelled or whose change is at risk
+  (`reason` "canceled" or "late"). After a ride: from where it leaves one, at its arrival with
+  its delay, as before. A cancelled first ride: from every stop the search started from (the
+  place, `platform` ""), at the journey's departure. Every trip live data say is cancelled is
+  skipped, in late fallbacks too.
+- Page: "Instead: ..." under "bus 300 at 08:05 is canceled".
+- Tests: RAPTOR's skip; a cancelled second ride (the bus at 08:18, not the cancelled 08:08 one
+  there would be time for); late and cancelled; a cancelled first ride, from the place and not
+  its platform; another cancelled trip skipped; browser text. 239 unit, 37 browser.
+
+Verified:
+- Mutations, 11 of 11 caught. One survived first (the cancelled first ride's platform), since
+  Alpha has no platform code in the test feed; an assertion from Bravo now catches it.
+- No cancelled trip in Golemio this morning (25 stations, 11:20), so a real trip was marked
+  cancelled in the real live data. Kobylisy -> Anděl, metro B at Florenc 11:37 cancelled:
+  fallback metro B 11:41 -> Anděl 11:49, as IDOS's next connection. Karlovo náměstí -> Ládví,
+  tram 10 at 11:50 (platform A) cancelled: first the fallback searched only from platform A
+  and arrived 12:15, while IDOS has 12:11 (metro B 11:53 from the same place); now it starts
+  from the whole place: tram 22 from platform B at 11:50 (in IDOS too), at Ládví 12:11.
+- Found on the way: Golemio's departureboards gives at most 100 departures, whatever `limit`
+  says. At Anděl that is ~37 minutes, not the hour journeys ask for: rides further on at the
+  busiest stations get no delay (null: shown as unknown, not wrong).
+
 ## 2026-11-15 (interactive): if a change at risk is missed
 
 Why: next step 1, picked by the user. A journey said "this change may be missed" but not what
@@ -946,8 +978,9 @@ Mutation checks: without the filter or without the level penalty, one test each 
 
 ## Next steps (in order)
 
-1. A cancelled ride: a fallback for it as well (needs RAPTOR to skip one trip, since searching
-   from its stop at its time would board it again).
-2. Stops without a time in the feed: interpolate by distance (PID has none, so only for other
+1. Golemio answers at most 100 departures per request: split journey questions (by stop, or
+   by time) so rides 40-60 minutes ahead at the busiest stations get their delays too.
+2. Plan journeys themselves around trips live data say are cancelled (now only fallbacks do).
+3. Stops without a time in the feed: interpolate by distance (PID has none, so only for other
    feeds).
-3. compare-journeys takes ~45 s for 2,000 queries; profile it if it gets run often.
+4. compare-journeys takes ~25-45 s; profile it if it gets run often.

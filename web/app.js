@@ -320,20 +320,21 @@ function boardUrl(stop, time) {
 }
 
 /**
- * Under a change at risk: how to go on if it is missed, from where the late vehicle leaves one,
- * with a link that searches from there.
+ * Under a cancelled ride or a change at risk: how to go on without it, from where the ride
+ * before leaves one (or where the journey starts), with a link that searches from there.
  */
 function fallbackLine(fallback) {
   const box = el("span", "fallback");
+  const lead = fallback.reason === "canceled" ? "Instead" : "If you miss it";
   const rides = fallback.journey?.legs.filter((l) => l.kind === "ride") ?? [];
   if (!fallback.journey) {
-    box.append(`If you miss it: nothing more from ${stopName(fallback.from)} today. `);
+    box.append(`${lead}: nothing more from ${stopName(fallback.from)} today. `);
   } else if (rides.length === 0) {
-    box.append(`If you miss it: walk from ${stopName(fallback.from)}, arriving ${fallback.journey.arrival}. `);
+    box.append(`${lead}: walk from ${stopName(fallback.from)}, arriving ${fallback.journey.arrival}. `);
   } else {
     const how = rides.map((r) => `${r.mode} ${r.line} at ${r.departure} from ${stopName(r.from)}`).join(", then ");
     const later = fallback.later > 0 ? ` (${fallback.later} min later)` : "";
-    box.append(`If you miss it: ${how}, arriving ${fallback.journey.arrival}${later}. `);
+    box.append(`${lead}: ${how}, arriving ${fallback.journey.arrival}${later}. `);
   }
   // From when the journey found leaves: searching from the stop's name at the time one gets off
   // would offer the vehicle that may be gone again, from the stop's other platforms.
