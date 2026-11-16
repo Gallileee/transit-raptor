@@ -1,5 +1,37 @@
 # Progress log
 
+## 2026-11-16 (interactive): a faster planner, and compare-journeys in parallel
+
+Why: next step, picked by the user. compare-journeys took ~39 s for 2,000 queries on PID.
+
+Found (CPU profile, 500 queries): loading is under 0.5 s a side; the rest is the search,
+8.4 ms a query. In it: building each round's pattern queue from `stopPatterns` (arrays of
+objects) and a Map, the footpaths (objects too) and the Set of marked stops took about half;
+allocating and filling the labels (6 rounds x 8 arrays x 20 k stops) a fifth.
+
+Done:
+- raptor.ts: stop patterns and footpaths as flat typed arrays, built once per timetable
+  (`flat`, a WeakMap); marked stops in `Marks` (a typed set that keeps the order a Set does, so
+  ties are broken as before); the queue as two typed arrays in first-met order; the labels of
+  finished searches reused (`takeLabels`/`giveBack`, `Search.release`; only `arrival` and
+  `rideArrival` are reset, the rest is written with them).
+- compare.ts: `planQueries` (one side's answers as plain data) and `compareResults`;
+  `compareJourneys` is the two together. scripts/compare-journeys.mjs plans each side in
+  `--jobs` worker threads (default 4), both sides at once; the first worker of a side opens
+  the feed alone (it may write the cache), the others after it.
+- Tests: searches one after another answer as each alone (labels reused, plans and profiles,
+  both orders); walking from the start is never worse than starting a walk later; answers
+  planned apart (structured clones) compare as the sides do. 253 unit tests.
+
+Verified:
+- compare-journeys against main: 2,000 + 1,000 (17 Nov) + 1,000 step-free journeys, all
+  identical. The report is byte for byte the same as the old script's with a base that differs
+  (before the chained-walk fix: 31 differences), with --jobs 1 and 4.
+- Mutations, 9 of 10 caught; the one left (not clearing the marks after building the queue)
+  only scans more, with the same answers.
+- Times (PID, 16 Nov, warm caches): one query 9.3 -> 4.1 ms median, a 60-minute window 11.7 ->
+  5.5 ms; compare-journeys 2,000 queries 38.7 s -> 5.0 s (4 jobs; 11.8 s with 1).
+
 ## 2026-11-16 (interactive): journeys planned around cancelled trips
 
 Why: next step 1, picked by the user. A journey could still lead with a ride that won't run;
@@ -1039,7 +1071,8 @@ Mutation checks: without the filter or without the level penalty, one test each 
 
 ## Next steps (in order)
 
-1. Stops without a time in the feed: interpolate by distance (PID has none, so only for other
+1. Draw a fallback journey on the map when it is picked (now text and a search link only).
+2. Stops without a time in the feed: interpolate by distance (PID has none, so only for other
    feeds).
-2. compare-journeys takes ~25-45 s; profile it if it gets run often.
-3. Draw a fallback journey on the map when it is picked (now text and a search link only).
+3. The departures board's countdown browser test failed once in a full run (passes alone and
+   on rerun): find what races.

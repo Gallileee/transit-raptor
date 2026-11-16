@@ -114,7 +114,7 @@ Prague's PID feed of 9 Nov 2026 (valid 9-22 Nov), on a laptop with Node 26:
 | Station graphs | 68 stations, 1,532 pathways, 2,922 changes, 0.1 s |
 | Shapes | 7,572 shapes, 3.28 M points, 1.1 s, 43 MB kept; 52,251 of 52,273 trips of a day fit their shape |
 | Memory | ~380 MB resident with two dates, shapes and the whole feed loaded (was ~760 MB before dates shared the stop-time arrays) |
-| One query | 2-15 ms for one departure; 45-190 ms over a 60-minute window (rRAPTOR) |
+| One query | 4.1 ms median (p90 6.5) for one departure; 5.5 ms median (p90 26) over a 60-minute window (rRAPTOR); 300 random queries, 16 Nov (were 9.3 and 11.7 before flat arrays and reused labels) |
 
 Compared with the official planner ([IDOS for PID](https://idos.cz/pid/spojeni/)) on Tuesday
 10 Nov 2026, every vehicle and arrival time below is the same to the minute:
@@ -342,7 +342,9 @@ identical, which differ (earlier, later, same time another way) with examples, a
 journey of this tree that can't be right: two walks in a row, time going backwards, legs that
 don't meet. Those make it exit 1, as does any difference with `--fail-on-diff`. It needs the
 PID feed (`npm run fetch-pid`), so it isn't part of CI; run it before changing the algorithm,
-the station graph or the feed reading. On PID 2,000 queries take about 45 s. It finds the
+the station graph or the feed reading. Each side plans in worker threads (`--jobs`, default 4,
+each with its own copy of the feed), both sides at once: on PID 2,000 queries take about 5 s
+(were 39 s one query after another). It finds the
 chained-walk bug of 14 Nov (31 of 1,000 journeys differ from before the fix, and with the old
 `raptor.ts` 32 have two walks in a row).
 

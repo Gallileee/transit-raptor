@@ -110,6 +110,96 @@ function labels(n: number): Labels {
   };
 }
 
+/**
+ * Labels of finished searches, per timetable, for the next search to reuse: allocating and
+ * filling them took a fifth of a search's time. Only `arrival` and `rideArrival` are reset: the
+ * rest is written with them (an arrival, a ride's arrival) and only read where they are set.
+ */
+const spare = new WeakMap<Timetable, Labels[]>();
+const MAX_SPARE = 64;
+
+function takeLabels(tt: Timetable): Labels {
+  const reused = spare.get(tt)?.pop();
+  if (!reused) return labels(tt.feed.stops.length);
+  reused.arrival.fill(Infinity);
+  reused.rideArrival.fill(Infinity);
+  return reused;
+}
+
+function giveBack(tt: Timetable, rounds: Labels[]): void {
+  let pool = spare.get(tt);
+  if (!pool) spare.set(tt, (pool = []));
+  for (const l of rounds) if (pool.length < MAX_SPARE) pool.push(l);
+}
+
+/**
+ * The timetable's stop patterns and footpaths as flat arrays (one run of entries per stop,
+ * `start[stop]` to `start[stop + 1]`), in the same order: the search reads them for every
+ * stop it marks, and arrays of objects cost most of its time. Built once per timetable.
+ */
+interface Flat {
+  readonly patternStart: Int32Array;
+  readonly pattern: Int32Array;
+  readonly position: Int32Array;
+  readonly walkStart: Int32Array;
+  readonly walkTo: Int32Array;
+  readonly walkSeconds: Float64Array;
+}
+
+const flats = new WeakMap<Timetable, Flat>();
+
+function flat(tt: Timetable): Flat {
+  const known = flats.get(tt);
+  if (known) return known;
+  const n = tt.feed.stops.length;
+  const patternStart = new Int32Array(n + 1);
+  const walkStart = new Int32Array(n + 1);
+  for (let s = 0; s < n; s++) {
+    patternStart[s + 1] = patternStart[s]! + tt.stopPatterns[s]!.length;
+    walkStart[s + 1] = walkStart[s]! + tt.footpaths[s]!.length;
+  }
+  const pattern = new Int32Array(patternStart[n]!);
+  const position = new Int32Array(patternStart[n]!);
+  const walkTo = new Int32Array(walkStart[n]!);
+  const walkSeconds = new Float64Array(walkStart[n]!);
+  for (let s = 0; s < n; s++) {
+    tt.stopPatterns[s]!.forEach((e, i) => {
+      pattern[patternStart[s]! + i] = e.pattern;
+      position[patternStart[s]! + i] = e.position;
+    });
+    tt.footpaths[s]!.forEach((f, i) => {
+      walkTo[walkStart[s]! + i] = f.to;
+      walkSeconds[walkStart[s]! + i] = f.seconds;
+    });
+  }
+  const built = { patternStart, pattern, position, walkStart, walkTo, walkSeconds };
+  flats.set(tt, built);
+  return built;
+}
+
+/** A set of stops that keeps the order they were added in, as a Set does, without its cost. */
+class Marks {
+  readonly list: Int32Array;
+  size = 0;
+  private readonly has: Uint8Array;
+
+  constructor(n: number) {
+    this.list = new Int32Array(n);
+    this.has = new Uint8Array(n);
+  }
+
+  add(stop: number): void {
+    if (this.has[stop]) return;
+    this.has[stop] = 1;
+    this.list[this.size++] = stop;
+  }
+
+  clear(): void {
+    for (let i = 0; i < this.size; i++) this.has[this.list[i]!] = 0;
+    this.size = 0;
+  }
+}
+
 /** The earliest trip of pattern `p` that leaves `position` at or after `time`, or -1. */
 export function earliestTrip(tt: Timetable, p: number, position: number, time: number): number {
   const pattern = tt.patterns[p]!;
@@ -128,18 +218,28 @@ export function earliestTrip(tt: Timetable, p: number, position: number, time: n
  * Each run returns the journeys it improved: at most one per number of vehicles.
  */
 export class Search {
-  private readonly rounds: Labels[];
+  private rounds: Labels[];
   private readonly targets: Set<number>;
   private readonly skip: ReadonlySet<string> | undefined;
+  private readonly flat: Flat;
+  /** Marked stops: those of the round before, until the queue is built; then this round's. */
+  private readonly marked: Marks;
+  /** The patterns to scan this round, in the order first met, and from which position. */
+  private readonly queue: Int32Array;
+  private readonly queueFrom: Int32Array;
 
   constructor(
     private readonly tt: Timetable,
     private readonly query: Query,
   ) {
     const n = tt.feed.stops.length;
-    this.rounds = Array.from({ length: query.maxTransfers + 2 }, () => labels(n));
+    this.rounds = Array.from({ length: query.maxTransfers + 2 }, () => takeLabels(tt));
     this.targets = new Set(query.to);
     this.skip = query.skip && query.skip.size > 0 ? query.skip : undefined;
+    this.flat = flat(tt);
+    this.marked = new Marks(n);
+    this.queue = new Int32Array(tt.patterns.length);
+    this.queueFrom = new Int32Array(tt.patterns.length).fill(-1);
   }
 
   /** The earliest trip to catch, as earliestTrip, passing over trips not to take. */
@@ -155,7 +255,10 @@ export class Search {
     const { tt, query, rounds, targets } = this;
     if (query.from.length === 0 || targets.size === 0 || query.from.some((s) => targets.has(s))) return [];
     const n = tt.feed.stops.length;
-    let marked = new Set<number>();
+    const { patternStart, pattern: stopPattern, position: stopPosition, walkStart, walkTo, walkSeconds } = this.flat;
+    const { queue, queueFrom } = this;
+    const marked = this.marked;
+    marked.clear();
 
     // Round 0: being at the origin, and walking from there.
     const start = rounds[0]!;
@@ -167,8 +270,9 @@ export class Search {
       }
     }
     for (const s of query.from) {
-      for (const { to, seconds } of tt.footpaths[s]!) {
-        const t = departAt + seconds;
+      for (let w = walkStart[s]!; w < walkStart[s + 1]!; w++) {
+        const to = walkTo[w]!;
+        const t = departAt + walkSeconds[w]!;
         if (t < start.arrival[to]!) {
           start.arrival[to] = t;
           start.kind[to] = WALK;
@@ -192,19 +296,26 @@ export class Search {
       const targetBefore = this.bestTarget(current);
 
       // 1. Each pattern serving an improved stop, from its first such stop.
-      const queue = new Map<number, number>();
-      for (const stop of marked) {
-        for (const { pattern, position } of tt.stopPatterns[stop]!) {
-          const known = queue.get(pattern);
-          if (known === undefined || position < known) queue.set(pattern, position);
+      let queued = 0;
+      for (let m = 0; m < marked.size; m++) {
+        const stop = marked.list[m]!;
+        for (let e = patternStart[stop]!; e < patternStart[stop + 1]!; e++) {
+          const p = stopPattern[e]!;
+          const position = stopPosition[e]!;
+          const known = queueFrom[p]!;
+          if (known < 0) queue[queued++] = p;
+          if (known < 0 || position < known) queueFrom[p] = position;
         }
       }
-      marked = new Set();
+      marked.clear();
 
       // 2. Scan the patterns. Target pruning: an arrival no earlier than the best known at the
       // destination (in this round) can't lead to a better journey.
       let targetBound = targetBefore;
-      for (const [p, from] of queue) {
+      for (let q = 0; q < queued; q++) {
+        const p = queue[q]!;
+        const from = queueFrom[p]!;
+        queueFrom[p] = -1;
         const pattern = tt.patterns[p]!;
         let trip = -1;
         let boardPosition = -1;
@@ -238,9 +349,12 @@ export class Search {
 
       // 3. Walk from the stops a vehicle improved (one walk at a time, not chains of walks): from
       // when the vehicle got there, even if a walk below gets there sooner.
-      for (const stop of [...marked]) {
-        for (const { to, seconds } of tt.footpaths[stop]!) {
-          const t = current.rideArrival[stop]! + seconds;
+      const ridden = marked.size;
+      for (let m = 0; m < ridden; m++) {
+        const stop = marked.list[m]!;
+        for (let w = walkStart[stop]!; w < walkStart[stop + 1]!; w++) {
+          const to = walkTo[w]!;
+          const t = current.rideArrival[stop]! + walkSeconds[w]!;
           if (t < current.arrival[to]! && t < targetBound) {
             current.arrival[to] = t;
             current.kind[to] = WALK;
@@ -254,6 +368,12 @@ export class Search {
     }
 
     return improvedRounds.map((k) => reconstruct(tt, rounds, k, this.bestTargetStop(rounds[k]!)));
+  }
+
+  /** Done: its labels go to the next search on this timetable (run no more after this). */
+  release(): void {
+    giveBack(this.tt, this.rounds);
+    this.rounds = [];
   }
 
   private bestTarget(l: Labels): number {
@@ -310,7 +430,11 @@ function dominates(a: Journey, b: Journey): boolean {
 export function profile(tt: Timetable, query: Query): Journey[] {
   const search = new Search(tt, query);
   const found: Journey[] = [];
-  for (const t of departureTimes(tt, query)) found.push(...search.run(t));
+  try {
+    for (const t of departureTimes(tt, query)) found.push(...search.run(t));
+  } finally {
+    search.release();
+  }
   const pareto = found.filter((j, i) => !found.some((other, o) => (o !== i && dominates(other, j)) || (o < i && same(other, j))));
   const until = query.departAt + (query.window ?? 0);
   const inside = pareto.filter((j) => j.departure <= until);
@@ -321,6 +445,16 @@ function same(a: Journey, b: Journey): boolean {
   return a.departure === b.departure && a.arrival === b.arrival && a.transfers === b.transfers;
 }
 
+/** One search from departAt, its labels given back after. */
+function once(tt: Timetable, query: Query): Journey[] {
+  const search = new Search(tt, query);
+  try {
+    return search.run(query.departAt);
+  } finally {
+    search.release();
+  }
+}
+
 /**
  * The best journey for each number of transfers that beats every journey with fewer: the
  * earliest arrival. With a window, it also leaves as late as possible: the profile has already
@@ -328,7 +462,7 @@ function same(a: Journey, b: Journey): boolean {
  * one isn't told to leave earlier than needed. Useless detours are dropped (see withoutDetours).
  */
 export function plan(tt: Timetable, query: Query): Journey[] {
-  const candidates = (query.window ?? 0) > 0 ? profile(tt, query) : new Search(tt, query).run(query.departAt);
+  const candidates = (query.window ?? 0) > 0 ? profile(tt, query) : once(tt, query);
   const byTransfers = new Map<number, Journey>();
   for (const j of candidates) {
     const known = byTransfers.get(j.transfers);

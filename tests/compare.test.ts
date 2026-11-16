@@ -3,7 +3,16 @@
  */
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { compareJourneys, formatReport, journeyKey, journeyProblems, sampleQueries, type Side } from "../src/compare.js";
+import {
+  compareJourneys,
+  compareResults,
+  formatReport,
+  journeyKey,
+  journeyProblems,
+  planQueries,
+  sampleQueries,
+  type Side,
+} from "../src/compare.js";
 import { loadFeed } from "../src/gtfs.js";
 import { type Journey, type Leg, plan } from "../src/raptor.js";
 import { StopIndex } from "../src/stops.js";
@@ -166,5 +175,29 @@ describe("on the test feed", () => {
     const names = feed.trips.flatMap((t) => [...t.stops].map((s) => feed.stops[s]!.name));
     const report = compareJourneys(sampleQueries(names, 100, 3), real, real);
     expect(report).toMatchObject({ compared: 100, skipped: 0, same: 100, differences: [], problems: [] });
+  });
+
+  it("compares answers planned apart (in worker threads) as it compares the sides", async () => {
+    const feed = await loadFeed(MINI, parseDate("2026-11-10"));
+    const index = new StopIndex(feed.stops);
+    const sideOn = (timetable: ReturnType<typeof buildTimetable>): Side => ({
+      resolve: (name) => {
+        const match = index.find(name);
+        return match.kind === "found" ? match.stops : undefined;
+      },
+      plan: (query) => plan(timetable, query),
+      stopId: (i) => feed.stops[i]!.id,
+    });
+    const normal = sideOn(buildTimetable(feed));
+    const stepFree = sideOn(buildTimetable(feed, { stepFree: true }));
+    const names = [...feed.trips.flatMap((t) => [...t.stops].map((s) => feed.stops[s]!.name)), "Nowhere"];
+    const queries = sampleQueries(names, 200, 5);
+    const together = compareJourneys(queries, normal, stepFree);
+    // As a worker sends them: structured clones (Infinity arrivals and all).
+    const apart = compareResults(queries, structuredClone(planQueries(queries, normal)), structuredClone(planQueries(queries, stepFree)));
+    expect(apart).toEqual(together);
+    expect(together.differences.length).toBeGreaterThan(0);
+    expect(together.skipped).toBeGreaterThan(0);
+    expect(together.differences.some((d) => d.headArrival === Infinity)).toBe(true);
   });
 });
