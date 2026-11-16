@@ -100,41 +100,63 @@ export interface Report {
   readonly problems: { query: SampledQuery; journey: string; problems: string[] }[];
 }
 
-/** Plan every query on both sides and compare the journeys (all of them, not only the first). */
-export function compareJourneys(queries: readonly SampledQuery[], base: Side, head: Side, maxTransfers = 4): Report {
+/**
+ * One side's answer to one query, as plain data (so a worker thread can send it): its journeys
+ * as keys, the earliest arrival (Infinity: none) and what is wrong with any of them.
+ */
+export interface Planned {
+  readonly keys: string[];
+  readonly arrival: number;
+  readonly problems: { journey: string; problems: string[] }[];
+}
+
+/** Plan each query on one side: null where the side can't resolve a stop name. */
+export function planQueries(queries: readonly SampledQuery[], side: Side, maxTransfers = 4): (Planned | null)[] {
+  return queries.map((query) => {
+    const from = side.resolve(query.from);
+    const to = side.resolve(query.to);
+    if (!from || !to) return null;
+    const journeys = side.plan({ from, to, departAt: query.departAt, maxTransfers });
+    const key = (j: Journey) => journeyKey(j, (i) => side.stopId(i));
+    return {
+      keys: journeys.map(key),
+      arrival: Math.min(...journeys.map((j) => j.arrival)),
+      problems: journeys.flatMap((j) => {
+        const found = journeyProblems(j, query.departAt);
+        return found.length > 0 ? [{ journey: key(j), problems: found }] : [];
+      }),
+    };
+  });
+}
+
+/** Compare two sides' answers to the same queries; problems are the new side's only. */
+export function compareResults(queries: readonly SampledQuery[], base: readonly (Planned | null)[], head: readonly (Planned | null)[]): Report {
   let compared = 0;
   let skipped = 0;
   let same = 0;
   const differences: Difference[] = [];
   const problems: Report["problems"] = [];
-  for (const query of queries) {
-    const run = (side: Side) => {
-      const from = side.resolve(query.from);
-      const to = side.resolve(query.to);
-      if (!from || !to) return undefined;
-      return side.plan({ from, to, departAt: query.departAt, maxTransfers });
-    };
-    const before = run(base);
-    const after = run(head);
+  queries.forEach((query, i) => {
+    const before = base[i];
+    const after = head[i];
     if (!before || !after) {
       skipped++;
-      continue;
+      return;
     }
     compared++;
-    for (const journey of after) {
-      const found = journeyProblems(journey, query.departAt);
-      if (found.length > 0) problems.push({ query, journey: journeyKey(journey, (i) => head.stopId(i)), problems: found });
-    }
-    const baseKeys = before.map((j) => journeyKey(j, (i) => base.stopId(i)));
-    const headKeys = after.map((j) => journeyKey(j, (i) => head.stopId(i)));
-    if (baseKeys.join("\n") === headKeys.join("\n")) {
+    for (const p of after.problems) problems.push({ query, ...p });
+    if (before.keys.join("\n") === after.keys.join("\n")) {
       same++;
-      continue;
+      return;
     }
-    const earliest = (journeys: Journey[]) => Math.min(...journeys.map((j) => j.arrival));
-    differences.push({ query, base: baseKeys, head: headKeys, baseArrival: earliest(before), headArrival: earliest(after) });
-  }
+    differences.push({ query, base: before.keys, head: after.keys, baseArrival: before.arrival, headArrival: after.arrival });
+  });
   return { compared, skipped, same, differences, problems };
+}
+
+/** Plan every query on both sides and compare the journeys (all of them, not only the first). */
+export function compareJourneys(queries: readonly SampledQuery[], base: Side, head: Side, maxTransfers = 4): Report {
+  return compareResults(queries, planQueries(queries, base, maxTransfers), planQueries(queries, head, maxTransfers));
 }
 
 /** The report as lines of text: totals, then up to `examples` differences and every problem. */

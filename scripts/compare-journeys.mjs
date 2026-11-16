@@ -2,25 +2,88 @@
 //
 //   npm run compare-journeys -- [--base main] [--gtfs data/pid] [--date YYYY-MM-DD]
 //                               [--count 1000] [--seed 1] [--step-free] [--examples 10]
-//                               [--fail-on-diff]
+//                               [--jobs N] [--fail-on-diff]
 //
 // `npm run compare-journeys` builds this tree first. The base (a branch, tag or commit) is
 // built from git into .compare/<commit>/ (gitignored, kept for the next run): its src/ and
 // tsconfig files only, compiled with this tree's TypeScript. Each side opens the feed and
 // resolves stop names on its own; the logic is in src/compare.ts.
 //
+// Each side plans in --jobs worker threads (default: 4, or fewer on a smaller machine), each
+// with its own copy of the feed (~250 MB) and a share of the queries; both sides at once.
+//
 // Exit code: 1 if a journey of this tree has a problem (two walks in a row, time going back),
 // or with --fail-on-diff if any journey differs; 2 for bad arguments or a base that won't
 // build; 0 otherwise.
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { availableParallelism } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
 
 const root = join(import.meta.dirname, "..");
+
+if (!isMainThread) {
+  // A worker: one side, opened once, then answers the queries it is sent.
+  const side = await openSide(workerData);
+  parentPort.postMessage({ names: workerData.names ? side.names : undefined });
+  const { planQueries } = await import(pathToFileURL(join(root, "dist", "compare.js")).href);
+  parentPort.on("message", (queries) => {
+    parentPort.postMessage({ planned: planQueries(queries, side) });
+    parentPort.close();
+  });
+}
+
+/** One version: its own feed reading, timetable and search, on the date asked. */
+async function openSide({ dist, cacheDir, gtfs, date, stepFree }) {
+  const load = (name) => import(pathToFileURL(join(dist, name)).href);
+  const [{ openFeed }, { feedForDate }, { buildTimetable }, { plan }, { StopIndex }, time] = await Promise.all(
+    ["cache.js", "gtfs.js", "timetable.js", "raptor.js", "stops.js", "time.js"].map(load),
+  );
+  const { compiled } = await openFeed(gtfs, { cacheDir, shapes: false });
+  const now = new Date();
+  const day = date ? time.parseDate(date) : { year: now.getFullYear(), month: now.getMonth() + 1, day: now.getDate() };
+  const feed = feedForDate(compiled, day);
+  const timetable = buildTimetable(feed, { stepFree });
+  const index = new StopIndex(feed.stops);
+  return {
+    names: [...new Set(feed.trips.flatMap((t) => [...t.stops].map((s) => feed.stops[s].name)))],
+    resolve(name) {
+      const match = index.find(name);
+      return match.kind === "found" ? match.stops : undefined;
+    },
+    plan: (query) => plan(timetable, query),
+    stopId: (i) => feed.stops[i].id,
+  };
+}
+
+/** A worker for one side; `ready` resolves with its first message (the names, if asked). */
+function startWorker(data) {
+  const worker = new Worker(new URL(import.meta.url), { workerData: data });
+  const messages = [];
+  const waiting = [];
+  worker.on("message", (m) => (waiting.length > 0 ? waiting.shift().resolve(m) : messages.push(m)));
+  let failed;
+  worker.on("error", (e) => {
+    failed = e;
+    waiting.splice(0).forEach((w) => w.reject(e));
+  });
+  const next = () => {
+    if (messages.length > 0) return Promise.resolve(messages.shift());
+    if (failed) return Promise.reject(failed);
+    return new Promise((resolve, reject) => waiting.push({ resolve, reject }));
+  };
+  return { worker, next };
+}
+
+if (isMainThread) await main();
+
+async function main() {
 const { values } = parseArgs({
   options: {
+    jobs: { type: "string", default: String(Math.max(1, Math.min(4, Math.floor(availableParallelism() / 2)))) },
     base: { type: "string", default: "main" },
     gtfs: { type: "string", default: join(root, "data", "pid") },
     date: { type: "string" },
@@ -41,6 +104,7 @@ function fail(message) {
   process.exit(2);
 }
 const count = whole("count", 1);
+const jobs = whole("jobs", 1);
 const seed = whole("seed", 0);
 const examples = whole("examples", 0);
 
@@ -74,41 +138,41 @@ function buildBase(ref) {
   return { commit, dist };
 }
 
-/** One version: its own feed reading, timetable and search, on `date`. */
-async function side(dist, cacheDir) {
-  const load = (name) => import(pathToFileURL(join(dist, name)).href);
-  const [{ openFeed }, { feedForDate }, { buildTimetable }, { plan }, { StopIndex }, time] = await Promise.all(
-    ["cache.js", "gtfs.js", "timetable.js", "raptor.js", "stops.js", "time.js"].map(load),
-  );
-  const { compiled } = await openFeed(values.gtfs, { cacheDir, shapes: false });
-  const now = new Date();
-  const date = values.date ? time.parseDate(values.date) : { year: now.getFullYear(), month: now.getMonth() + 1, day: now.getDate() };
-  const feed = feedForDate(compiled, date);
-  const timetable = buildTimetable(feed, { stepFree: values["step-free"] });
-  const index = new StopIndex(feed.stops);
-  return {
-    names: [...new Set(feed.trips.flatMap((t) => [...t.stops].map((s) => feed.stops[s].name)))],
-    resolve(name) {
-      const match = index.find(name);
-      return match.kind === "found" ? match.stops : undefined;
-    },
-    plan: (query) => plan(timetable, query),
-    stopId: (i) => feed.stops[i].id,
-  };
-}
-
 if (!existsSync(join(root, "dist", "compare.js"))) fail("build this tree first (npm run build)");
-const { compareJourneys, formatReport, sampleQueries } = await import(pathToFileURL(join(root, "dist", "compare.js")).href);
+const { compareResults, formatReport, sampleQueries } = await import(pathToFileURL(join(root, "dist", "compare.js")).href);
 const base = buildBase(values.base);
 const started = performance.now();
-const [before, after] = [
-  await side(base.dist, join(root, ".compare", base.commit.slice(0, 12), "cache")),
-  await side(join(root, "dist"), join(values.gtfs, ".transit-raptor-cache")),
+const common = { gtfs: values.gtfs, date: values.date, stepFree: values["step-free"] };
+const sides = [
+  { dist: base.dist, cacheDir: join(root, ".compare", base.commit.slice(0, 12), "cache") },
+  { dist: join(root, "dist"), cacheDir: join(values.gtfs, ".transit-raptor-cache") },
 ];
-const queries = sampleQueries(after.names, count, seed);
-const report = compareJourneys(queries, before, after);
+// The first worker of each side opens the feed alone (and writes its cache, if it has to);
+// the others start once it is there. This tree's first worker gives the stop names.
+const workers = sides.map((side, s) => [startWorker({ ...common, ...side, names: s === 1 })]);
+const firsts = await Promise.all(workers.map(([w]) => w.next()));
+for (const [s, side] of sides.entries()) {
+  for (let j = 1; j < jobs; j++) workers[s].push(startWorker({ ...common, ...side, names: false }));
+}
+await Promise.all(workers.flatMap((list) => list.slice(1).map((w) => w.next())));
+const queries = sampleQueries(firsts[1].names, count, seed);
+// Each worker plans a run of the queries; the answers are put back in order.
+const share = Math.ceil(queries.length / jobs);
+const [before, after] = await Promise.all(
+  workers.map(async (list) => {
+    const parts = await Promise.all(
+      list.map((w, j) => {
+        w.worker.postMessage(queries.slice(j * share, (j + 1) * share));
+        return w.next().then((m) => m.planned);
+      }),
+    );
+    return parts.flat();
+  }),
+);
+const report = compareResults(queries, before, after);
 const kind = values["step-free"] ? "step-free " : "";
 console.log(`${values.base} (${base.commit.slice(0, 12)}) vs this tree, ${kind}journeys on ${values.date ?? "today"}, seed ${seed}:`);
 for (const line of formatReport(report, examples)) console.log(line);
-console.log(`\n${Math.round(performance.now() - started)} ms`);
+console.log(`\n${Math.round(performance.now() - started)} ms (${jobs} job${jobs > 1 ? "s" : ""} a side)`);
 process.exit(report.problems.length > 0 || (values["fail-on-diff"] && report.differences.length > 0) ? 1 : 0);
+}
