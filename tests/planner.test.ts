@@ -61,9 +61,10 @@ describe("loading", () => {
     const express = feed.trips.find((t) => t.id === "L3express")!;
     expect([...express.stops].map((s) => feed.stops[s]!.id)).toEqual(["A", "C", "D"]);
     const l9 = feed.trips.find((t) => t.id === "L9a")!;
-    // B2 has no times: it takes the previous stop's departure, 08:20.
-    expect(l9.arrivals[1]).toBe(parseClock("08:20"));
-    expect(l9.departures[1]).toBe(parseClock("08:20"));
+    // B2 has no times: between Charlie 08:20 and Foxtrot North 08:25, a quarter of the way
+    // (1.1 of 4.4 km in straight lines; the trip has no shape distances): 08:21:15.
+    expect(l9.arrivals[1]).toBe(parseClock("08:21") + 15);
+    expect(l9.departures[1]).toBe(parseClock("08:21") + 15);
   });
 
   it("reads quoted names with commas and diacritics", async () => {

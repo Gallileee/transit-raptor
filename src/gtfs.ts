@@ -16,6 +16,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { readCsv } from "./csv.js";
+import { distanceMetres } from "./geo.js";
 import { addDays, DAY, dateKey, parseDate, parseTime, type ServiceDate, weekday } from "./time.js";
 
 export class FeedError extends Error {}
@@ -457,14 +458,9 @@ export async function compileFeed(dir: string): Promise<CompiledFeed> {
   const trips = tripMeta.map((meta, t): CompiledTrip => {
     const [s, e] = [start[t]!, start[t + 1]!];
     let error = errors[t]!;
-    // Stops without times take the time of the last stop that had one (never too early, which
-    // would let a connection look possible when it isn't). The first stop must have a time.
     if (!error && e - s >= 2) {
       if (columns.arrivals[s]! < 0) error = `trip ${meta.id}: the first stop has no time`;
-      for (let i = s + 1; i < e; i++) {
-        if (columns.arrivals[i]! < 0) columns.arrivals[i] = columns.departures[i - 1]!;
-        if (columns.departures[i]! < 0) columns.departures[i] = columns.arrivals[i]!;
-      }
+      else interpolateTimes(columns, s, e, stops);
     }
     return { ...meta, start: s, length: e - s, error };
   });
@@ -581,6 +577,55 @@ function hexColor(text: string): string {
  * (counting sort, file order kept) and sorts by stop_sequence only where a trip's rows aren't
  * in order already. The same approach as for shapes: a JS array per trip costs far more.
  */
+/**
+ * Stops without times (-1) in the stop times `s` to `e` of one trip get times between the timed
+ * stops around them, as GTFS asks, in proportion to the distance between: shape_dist_traveled
+ * where every stop of the stretch has it and it doesn't go back, else straight lines from stop
+ * to stop (equal steps if the stops are all in one place). Stops after the last timed one take
+ * its departure: there is nothing to go on (GTFS wants the last stop timed). The first stop
+ * must have a time. Times are whole seconds; arrival and departure are the same.
+ */
+export function interpolateTimes(
+  columns: { arrivals: Int32Array; departures: Int32Array; stops: Int32Array; distances: Float32Array },
+  s: number,
+  e: number,
+  stops: readonly { lat: number; lon: number }[],
+): void {
+  const { arrivals, departures, stops: at, distances } = columns;
+  for (let i = s + 1; i < e; i++) {
+    if (arrivals[i]! >= 0) continue;
+    const before = i - 1; // timed, or filled in just now
+    let after = i;
+    while (after < e && arrivals[after]! < 0) after++;
+    const from = departures[before]!;
+    if (after === e || arrivals[after]! < from) {
+      // Nothing timed after it (or a time going back): the last time known, never earlier.
+      for (let k = i; k < after; k++) arrivals[k] = departures[k] = from;
+      i = after;
+      continue;
+    }
+    const to = arrivals[after]!;
+    // How far along the stretch each stop is.
+    const along = new Float64Array(after - before + 1);
+    let shaped = true;
+    for (let k = before; k <= after; k++) {
+      const d = distances[k]!;
+      if (!Number.isFinite(d) || (k > before && d < distances[k - 1]!)) shaped = false;
+    }
+    for (let k = before + 1; k <= after; k++) {
+      const a = stops[at[k - 1]!]!;
+      const b = stops[at[k]!]!;
+      along[k - before] = shaped ? distances[k]! - distances[before]! : along[k - before - 1]! + distanceMetres(a.lat, a.lon, b.lat, b.lon);
+    }
+    const total = along[after - before]!;
+    for (let k = i; k < after; k++) {
+      const share = total > 0 ? along[k - before]! / total : (k - before) / (after - before);
+      arrivals[k] = departures[k] = Math.round(from + (to - from) * share);
+    }
+    i = after;
+  }
+}
+
 class StopTimeBuilder {
   private readonly counts: Int32Array;
   private n = 0;

@@ -370,8 +370,10 @@ chained-walk bug of 14 Nov (31 of 1,000 journeys differ from before the fix, and
   where one gets off. Journeys of the day before, after midnight, get no live data.
 - No fares, or daylight-saving corrections (GTFS times are
   measured from "noon minus 12 h", which differs from midnight on the two DST days).
-- Stops without times in `stop_times.txt` take the previous stop's departure instead of an
-  interpolated time.
+- Stops without times in `stop_times.txt` get times between the timed stops around them, by
+  the distance travelled (`shape_dist_traveled`, else straight lines): on PID's real times,
+  blanked at every other stop, that is 15 s off at the median (p90 43 s). Stops after the last
+  timed one take its departure. PID itself times every stop.
 - The cache trusts file sizes and modification times: a feed file edited in place within the
   same millisecond and to the same size would not be noticed (`--no-cache` or deleting the
   folder helps). It is written for little-endian machines only (all common ones); elsewhere it

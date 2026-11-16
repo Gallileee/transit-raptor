@@ -46,10 +46,10 @@ describe("departureTimes", () => {
   it("counts a walk to a nearby stop before the departure", async () => {
     const { timetable, query } = await setup();
     // Bravo Gate has no service. Bravo 2 is a 60 s walk away (line 200 at 08:08 and 08:18,
-    // line 9 passes at 08:20), Bravo 1 a 119 s walk (line 1 at 08:05 and 08:15; line 8 doesn't
-    // pick up there).
+    // line 9 passes at 08:21:15, a time worked out from the distances), Bravo 1 a 119 s walk (line
+    // 1 at 08:05 and 08:15; line 8 doesn't pick up there).
     expect(departureTimes(timetable, query("Bravo Gate", "Delta", "08:00", 30)).map(formatClock)).toEqual([
-      "08:19",
+      "08:20",
       "08:17",
       "08:13",
       "08:07",
