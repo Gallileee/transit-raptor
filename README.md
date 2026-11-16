@@ -254,9 +254,13 @@ journeys themselves are still planned on the timetable. Under a change at risk t
 how to go on if it is missed: the server searches again from where the late vehicle leaves
 one, from when it is expected there, and gives the journey that arrives first ("If you miss
 it: metro C at 22:50 from I. P. Pavlova (1), arriving 23:03 (10 min later)", with a link that
-searches from there). `/api/plan` has `live`, each ride `delay`, `canceled` and `changeAtRisk`,
-and a journey with a change at risk `fallback` (`leg`, `from`, `at`, `journey` or null when
-nothing goes on from there, `later` in minutes). To run with the key:
+searches from there). A cancelled ride gets one too ("Instead: ..."): from where the ride
+before leaves one or, if it is the first ride, from any stop of the place searched from (one
+who hasn't left can take another platform). Fallbacks never take a trip that live data say is
+cancelled (RAPTOR's `Query.skip`). `/api/plan` has `live`, each ride `delay`, `canceled` and
+`changeAtRisk`, and such a journey `fallback` (`leg`, `reason` "canceled" or "late", `from`,
+`at`, `journey` or null when nothing goes on from there, `later` in minutes). To run with the
+key:
 
 ```bash
 echo "GOLEMIO_API_KEY=..." > .env      # .env is in .gitignore

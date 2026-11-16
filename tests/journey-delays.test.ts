@@ -9,6 +9,7 @@
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { type LiveDeparture, type LiveQuery, liveKey, type Realtime, RealtimeError } from "../src/realtime.js";
+import { plan } from "../src/raptor.js";
 import { fallbackFor, journeyJson, type LegJson, Planner } from "../src/service.js";
 
 const MINI = join(import.meta.dirname, "fixtures", "mini");
@@ -138,7 +139,7 @@ describe("live delays in journeys", () => {
     expect(summary(none.rides)).toEqual(summary(failed.rides));
   });
 
-  describe("if a change at risk is missed", () => {
+  describe("if a change at risk is missed, or a ride is cancelled", () => {
     const fallbackOf = async (live: Map<string, LiveDeparture>) => (await journeys(live)).answer.journeys.map((j) => j.fallback);
     const rides = (journey: { legs: LegJson[] } | null | undefined) =>
       journey?.legs.filter((l): l is Ride => l.kind === "ride").map((r) => [r.line, stopName(r.from), r.departure, r.arrival, r.delay]);
@@ -150,6 +151,7 @@ describe("live delays in journeys", () => {
       expect(direct).toBeUndefined();
       expect({ ...viaBravo!, journey: rides(viaBravo!.journey) }).toEqual({
         leg: 2,
+        reason: "late",
         from: expect.objectContaining({ name: "Bravo", platform: "1" }),
         at: "08:07",
         journey: [["200", "Bravo (2)", "08:18", "08:25", null]],
@@ -172,7 +174,7 @@ describe("live delays in journeys", () => {
     it("says when nothing goes on from there", async () => {
       // Tram 1 25 minutes late: at Bravo 08:30, after the last bus to Delta.
       const [, viaBravo] = await fallbackOf(new Map([late("L1a", "A", 25 * 60)]));
-      expect(viaBravo).toEqual({ leg: 2, from: expect.objectContaining({ name: "Bravo" }), at: "08:30", journey: null, later: null });
+      expect(viaBravo).toEqual({ leg: 2, reason: "late", from: expect.objectContaining({ name: "Bravo" }), at: "08:30", journey: null, later: null });
     });
 
     it("takes the journey that arrives first, even with more changes", async () => {
@@ -193,7 +195,7 @@ describe("live delays in journeys", () => {
       };
       const live = new Map([late("T1", "C", 120)]);
       const json = journeyJson(loaded, journey, loaded.timetable, live);
-      const fallback = fallbackFor(loaded, journey, json, loaded.timetable, live, [d!], 4)!;
+      const fallback = fallbackFor(loaded, journey, json, loaded.timetable, live, { from: [c!], to: [d!], maxTransfers: 4 })!;
       expect([fallback.at, rides(fallback.journey), fallback.later]).toEqual([
         "08:01",
         [
@@ -204,8 +206,99 @@ describe("live delays in journeys", () => {
       ]);
     });
 
-    it("isn't given for a cancelled ride (the cancellation is shown instead)", async () => {
-      expect(await fallbackOf(new Map([late("L1a", "A", 150), late("L2a", "B2", 0, true)]))).toEqual([undefined, undefined]);
+    it("goes on without a cancelled ride, from where the ride before leaves one", async () => {
+      // Bus 200 at 08:08 cancelled, tram 1 on time at Bravo (1) 08:05: the 08:18 bus, not the
+      // cancelled one, though there would be time for it.
+      const [direct, viaBravo] = await fallbackOf(new Map([late("L1a", "A", 0), late("L2a", "B2", 0, true)]));
+      expect(direct).toBeUndefined();
+      expect({ ...viaBravo!, journey: rides(viaBravo!.journey) }).toEqual({
+        leg: 2,
+        reason: "canceled",
+        from: expect.objectContaining({ name: "Bravo", platform: "1" }),
+        at: "08:05",
+        journey: [["200", "Bravo (2)", "08:18", "08:25", null]],
+        later: 10,
+      });
+      // Late and cancelled: the cancellation is the reason.
+      const [, both] = await fallbackOf(new Map([late("L1a", "A", 150), late("L2a", "B2", 0, true)]));
+      expect([both!.reason, both!.at, rides(both!.journey)]).toEqual(["canceled", "08:07", [["200", "Bravo (2)", "08:18", "08:25", null]]]);
+    });
+
+    it("goes on from where the journey starts when its first ride is cancelled", async () => {
+      // Bus 300 at 08:05 cancelled: from Alpha at 08:05, tram 1 at 08:10 and bus 200, at 08:25.
+      const [direct] = await fallbackOf(new Map([late("L3express", "A", 0, true)]));
+      expect({ ...direct!, journey: rides(direct!.journey) }).toEqual({
+        leg: 0,
+        reason: "canceled",
+        from: expect.objectContaining({ name: "Alpha" }),
+        at: "08:05",
+        journey: [
+          ["1", "Alpha", "08:10", "08:15", null],
+          ["200", "Bravo (2)", "08:18", "08:25", null],
+        ],
+        later: -5,
+      });
+      // The place searched from, not the platform of the cancelled ride (bus 200 at Bravo (2)).
+      const fromBravo = await journeys(new Map([late("L2a", "B2", 0, true)]), undefined, { from: "bravo" });
+      const fallback = fromBravo.answer.journeys[0]!.fallback!;
+      expect([fallback.from.name, fallback.from.platform, fallback.at, rides(fallback.journey)]).toEqual([
+        "Bravo",
+        "",
+        "08:08",
+        [["200", "Bravo (2)", "08:18", "08:25", null]],
+      ]);
+    });
+
+    it("for a cancelled first ride, searches from any stop the search could start at", async () => {
+      // Built by hand: searching from Alpha or Foxtrot South to Echo, the journey's first ride
+      // (from Alpha) is cancelled. From Alpha alone the next way is at Echo 09:20; one who
+      // hasn't left can go from Foxtrot South instead: 08:30, at Echo 08:40.
+      const planner = new Planner(MINI, () => new Date(2026, 10, 10, 7, 50));
+      const loaded = await planner.load({ year: 2026, month: 11, day: 10 });
+      const [a, f2, e] = ["A", "F2", "E"].map((id) => loaded.feed.stopById.get(id)!);
+      const at = (h: number, m: number) => h * 3600 + m * 60;
+      const journey = {
+        departure: at(8, 0),
+        arrival: at(8, 50),
+        transfers: 0,
+        legs: [{ kind: "ride" as const, routeId: "L10", tripId: "X", headsign: "", from: a!, to: e!, departure: at(8, 0), arrival: at(8, 50), stopCount: 1 }],
+      };
+      const live = new Map([late("X", "A", 0, true)]);
+      const json = journeyJson(loaded, journey, loaded.timetable, live);
+      const fallback = fallbackFor(loaded, journey, json, loaded.timetable, live, { from: [a!, f2!], to: [e!], maxTransfers: 4 })!;
+      expect([fallback.reason, fallback.from.name, fallback.from.platform, fallback.at]).toEqual(["canceled", "Alpha", "", "08:00"]);
+      expect([rides(fallback.journey)!.map((r) => r[1]), fallback.journey!.arrival, fallback.later]).toEqual([["Foxtrot South"], "08:40", -10]);
+    });
+
+    it("doesn't take another trip live data say is cancelled", async () => {
+      // Tram 1 late, so bus 200 at 08:08 may be gone, and the 08:18 one is cancelled: on with
+      // the next tram 1 to Charlie and the slow bus 300 from there, at Delta 08:40.
+      const [, viaBravo] = await fallbackOf(new Map([late("L1a", "A", 150), late("L2b", "B2", 0, true)]));
+      expect([viaBravo!.reason, rides(viaBravo!.journey), viaBravo!.later]).toEqual([
+        "late",
+        [
+          ["1", "Bravo (1)", "08:15", "08:20", null],
+          ["300", "Charlie", "08:20", "08:40", null],
+        ],
+        25,
+      ]);
+    });
+  });
+
+  describe("RAPTOR's skip", () => {
+    it("passes over the trips given, catching the next one of the line", async () => {
+      const planner = new Planner(MINI, () => new Date(2026, 10, 10, 7, 50));
+      const loaded = await planner.load({ year: 2026, month: 11, day: 10 });
+      const [a, d] = ["A", "D"].map((id) => loaded.feed.stopById.get(id)!);
+      const trips = (skip?: string[]) =>
+        plan(loaded.timetable, { from: [a!], to: [d!], departAt: 8 * 3600, maxTransfers: 4, ...(skip ? { skip: new Set(skip) } : {}) }).map((j) =>
+          j.legs.flatMap((l) => (l.kind === "ride" ? [l.tripId] : [])),
+        );
+      expect(trips()).toEqual([["L3express"], ["L1a", "L2a"]]);
+      expect(trips(["L1a"])).toEqual([["L3express"], ["L1b", "L2b"]]);
+      expect(trips(["L2a"])).toEqual([["L3express"], ["L1a", "L2b"]]);
+      expect(trips(["L3express", "L1a", "L1b"])).toEqual([["L3slow"]]);
+      expect(trips([])).toEqual(trips());
     });
   });
 });

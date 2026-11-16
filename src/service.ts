@@ -154,15 +154,20 @@ export interface JourneyJson {
 }
 
 /**
- * If the change at risk is missed: the journey on from where the late vehicle leaves one, when
- * it is expected there (its delay as it is now), to the same destination.
+ * Live, when a ride is cancelled or the change to it is at risk: the journey on without it, to
+ * the same destination, with no trip live data say is cancelled.
  */
 export interface FallbackJson {
-  /** The index in `legs` of the ride whose change is at risk (the first one, if several are). */
+  /** The index in `legs` of that ride (the first one, if several are). */
   leg: number;
-  /** Where one gets off the late vehicle... */
+  /** "canceled": the ride won't run; "late": the vehicle before may arrive after it leaves. */
+  reason: "canceled" | "late";
+  /**
+   * Where the search starts: where one gets off the ride before, or, for a cancelled first
+   * ride, the place searched from (any of its stops; `platform` is then empty)...
+   */
   from: StopJson;
-  /** ...and when, with its delay. */
+  /** ...and when: that ride's arrival with its delay (or the journey's departure). */
   at: string;
   /** The journey that arrives first from there, or null when there is none (the last one gone). */
   journey: JourneyJson | null;
@@ -553,7 +558,7 @@ export class Planner {
       stepFree,
       journeys: journeys.map((j) => {
         const json = journeyJson(loaded, j, timetable, known);
-        const fallback = fallbackFor(loaded, j, json, timetable, known, to.stops, maxTransfers);
+        const fallback = fallbackFor(loaded, j, json, timetable, known, { from: from.stops, to: to.stops, maxTransfers });
         return fallback ? { ...json, fallback } : json;
       }),
       live: state,
@@ -639,9 +644,12 @@ export function journeyJson(
 }
 
 /**
- * For a journey with a change at risk: search again from where the vehicle before it leaves
- * one, from when it is expected there, so the vehicle that may be gone isn't counted on (it
- * leaves, as late as it is, before one can be at it).
+ * For a journey with a cancelled ride or a change at risk: search again from where the ride
+ * before leaves one, from when it is expected there, so the vehicle that may be gone isn't
+ * counted on (it leaves, as late as it is, before one can be at it). Without a ride before (a
+ * cancelled first ride), from any stop the search could start at (one who hasn't left can go
+ * to another platform: at Karlovo náměstí, metro B instead of the tram), from when the journey
+ * leaves. Trips that live data say are cancelled, that one among them, aren't taken.
  */
 export function fallbackFor(
   loaded: Loaded,
@@ -649,21 +657,35 @@ export function fallbackFor(
   json: JourneyJson,
   timetable: Timetable,
   live: ReadonlyMap<string, LiveDeparture>,
-  to: number[],
-  maxTransfers: number,
+  query: { from: number[]; to: number[]; maxTransfers: number },
 ): FallbackJson | undefined {
-  const leg = json.legs.findIndex((l) => l.kind === "ride" && l.changeAtRisk && !l.canceled);
+  const leg = json.legs.findIndex((l) => l.kind === "ride" && (l.canceled || l.changeAtRisk));
   if (leg < 0) return undefined;
+  const ride = json.legs[leg] as Extract<LegJson, { kind: "ride" }>;
   let i = leg - 1;
-  while (journey.legs[i]!.kind !== "ride") i--;
-  const before = journey.legs[i]!;
-  const late = json.legs[i]!;
-  const departAt = before.arrival + (late.kind === "ride" ? (late.delay ?? 0) : 0);
+  while (i >= 0 && journey.legs[i]!.kind !== "ride") i--;
+  let start: number[];
+  let from: StopJson;
+  let departAt: number;
+  if (i >= 0) {
+    const before = journey.legs[i]!;
+    const late = json.legs[i]!;
+    start = [before.to];
+    from = stopJson(loaded.feed, before.to);
+    departAt = before.arrival + (late.kind === "ride" ? (late.delay ?? 0) : 0);
+  } else {
+    start = query.from;
+    from = { ...stopJson(loaded.feed, journey.legs[0]!.from), platform: "" };
+    departAt = journey.departure;
+  }
+  const skip = new Set<string>();
+  for (const [key, known] of live) if (known.canceled) skip.add(key.slice(0, key.lastIndexOf("|")));
   // Of the journeys from there (fewer changes, or earlier), the one that arrives first.
-  const best = plan(timetable, { from: [before.to], to, departAt, maxTransfers }).at(-1);
+  const best = plan(timetable, { from: start, to: query.to, departAt, maxTransfers: query.maxTransfers, skip }).at(-1);
   return {
     leg,
-    from: stopJson(loaded.feed, before.to),
+    reason: ride.canceled ? "canceled" : "late",
+    from,
     at: formatClock(departAt),
     journey: best ? journeyJson(loaded, best, timetable, live) : null,
     later: best ? minutesBetween(journey.arrival, best.arrival) : null,
