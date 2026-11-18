@@ -1,5 +1,43 @@
 # Progress log
 
+## 2026-11-18 (scheduled run): the way on, drawn on the map
+
+Why: next step from the list ("draw the fallback on the map"). Under a change at risk or a
+cancelled ride the list said how to go on, but the map showed only the journey that may not
+work: where the way on goes (another stop, a walk to another platform) had to be read.
+
+Done (web only, no API change):
+- `draw()` draws `journey.fallback.journey` first, dotted (`1 10`, round caps) in each line's
+  colour, walks thinner (`1 7`) in grey, class `fallback-leg`, so the journey's own lines lie
+  over it where they share a street; a dot where each of its rides is boarded (`fallback-stop`,
+  tooltip "If you miss it: 08:18 Bravo (2)" / "Instead: ...", popup with the departures link).
+- A cancelled ride is drawn faded and broken (opacity 0.35, `12 8`, class `canceled-leg`,
+  tooltip "bus 300 (canceled)").
+- The map fits the journey and the way on; "Show on map" (a button styled as a link, after
+  "Search from there", only when there is a way on) selects the journey, fits the map to the way
+  on alone and scrolls the map into view (on a phone it is under the list).
+- e2e (4 new, 2 texts updated): dotted line + boarding dot, drawn first, tooltip, gone for a
+  journey without a fallback; "Show on map" selects and centres on the way on, the whole journey
+  again on a click; a cancelled ride faded, the way on (ride, walk, ride) inside the map; no
+  button without a way on.
+
+Verified: typecheck clean, 263 unit, 43 e2e (Edge) all passed. Mutations: no zoom in "Show on
+map" and fallback left out of the map's bounds, both caught (the second only after the test's way
+on got a detour east: the test feed's stops all lie on one meridian, inside the padding).
+Screenshots via Playwright on the test feed (desktop light, 375 px dark) look right.
+
+Not verified: real PID journeys with live delays in the browser. Starting `transit-raptor-live`
+was declined in this unattended run. To check: `node --env-file-if-exists=.env dist/bin.js serve
+--gtfs data/pid`, plan across a busy change in the evening rush (e.g. Anděl -> Letiště), pick a
+journey with "If you miss it", look at the dotted line and "Show on map" on a phone.
+
+Next steps:
+1. The browser check above, on the real feed with the Golemio key.
+2. Highlight the ride at risk on the map too (e.g. a warning dot at the change), not only in
+   the list.
+3. Another feed with untimed stops, to try `interpolateTimes` on real gaps (download needs the
+   owner's approval).
+
 ## 2026-11-16 (interactive): times for stops the feed gives none
 
 Why: next step, picked by the user. Stops without times took the previous stop's departure,

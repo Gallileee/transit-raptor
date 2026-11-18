@@ -263,7 +263,11 @@ before leaves one or, if it is the first ride, from any stop of the place search
 who hasn't left can take another platform). Fallbacks never take a trip that live data say is
 cancelled (RAPTOR's `Query.skip`). `/api/plan` has `live`, each ride `delay`, `canceled` and
 `changeAtRisk`, and such a journey `fallback` (`leg`, `reason` "canceled" or "late", `from`,
-`at`, `journey` or null when nothing goes on from there, `later` in minutes). To run with the
+`at`, `journey` or null when nothing goes on from there, `later` in minutes). On the map the
+way on is drawn dotted in each line's colour, under the journey (where they share a street
+the journey stays on top), with a small dot where each of its rides is boarded; a cancelled
+ride is drawn faded and broken. The map fits both, and "Show on map" next to the fallback
+zooms to the way on alone (and scrolls to the map on a phone). To run with the
 key:
 
 ```bash
@@ -326,7 +330,10 @@ timetable in the footer (in use, ended, and replaced by a reload), phone width a
 the test's control: the board, the countdown and the refresh every 30 s, departures dropping off
 while the server doesn't answer, an ambiguous stop, and the links between the pages.
 `e2e/stop-links.e2e.ts`: from a journey's stop (list and map popup, by click and by Enter) to
-the board at that time, which doesn't refresh, and back to now; the next day after midnight. It runs without the internet: Leaflet is served from `node_modules`
+the board at that time, which doesn't refresh, and back to now; the next day after midnight.
+`e2e/journey-delays.e2e.ts`: live delays, changes at risk, cancelled rides and their
+fallbacks, given to the page by rewriting `/api/plan`'s answer; the way on drawn dotted under
+the journey, a cancelled ride faded, "Show on map" zooming to the way on. It runs without the internet: Leaflet is served from `node_modules`
 (the page's integrity hashes prove it is the cdnjs file), map tiles are a blank image, and any
 other outside request, console error or exception fails the test. CI runs it as its own job
 and keeps the report and traces when it fails.
