@@ -88,7 +88,7 @@ test("says how to go on if a change at risk is missed, and searches from there",
   await page.goto(search);
   const viaBravo = journeys(page).nth(1);
   const fallback = viaBravo.locator(".leg").nth(2).locator(".fallback");
-  await expect(fallback).toHaveText("If you miss it: bus 200 at 08:18 from Bravo (2), arriving 08:25 (10 min later). Search from there");
+  await expect(fallback).toHaveText("If you miss it: bus 200 at 08:18 from Bravo (2), arriving 08:25 (10 min later). Search from there Show on map");
   await expect(page.locator(".fallback")).toHaveCount(1);
   await fallback.getByRole("link", { name: "Search from there" }).click();
   await expect(page).toHaveURL(/\?from=Bravo&to=Delta%2C\+N%C3%A1m%C4%9Bst%C3%AD&date=2026-11-10&time=08%3A16&window=0$/);
@@ -125,7 +125,7 @@ test("says how to go on without a cancelled ride", async ({ page }) => {
   const ride = journeys(page).first().locator(".leg").first();
   await expect(ride.locator(".risk")).toHaveText("bus 300 at 08:05 is canceled");
   await expect(ride.locator(".fallback")).toHaveText(
-    "Instead: tram 1 at 08:00 from Alpha, then bus 200 at 08:08 from Bravo (2), arriving 08:15. Search from there",
+    "Instead: tram 1 at 08:00 from Alpha, then bus 200 at 08:08 from Bravo (2), arriving 08:15. Search from there Show on map",
   );
   await expect(ride.getByRole("link", { name: "Search from there" })).toHaveAttribute("href", /from=Alpha&.*time=08%3A00&window=0/);
 });
@@ -157,4 +157,128 @@ test("says which cancelled trips the journeys were planned around, and only for 
   await page.getByRole("button", { name: "Find journeys" }).click();
   await expect(page.getByRole("status")).toContainText("no stop called");
   await expect(page.locator("#avoided")).toBeHidden();
+});
+
+/** The lines and dots Leaflet draws on the map (SVG paths in the overlay pane). */
+const drawn = (page: import("@playwright/test").Page) => page.locator(".leaflet-overlay-pane path");
+
+/** Journey 2 (tram 1, walk, bus 200) with bus 200 at risk; the way on is the next bus 200. */
+function missedAtBravo(body: any) {
+  if (body.from !== "Alpha") return;
+  body.live = "on";
+  const viaBravo = body.journeys[1];
+  viaBravo.legs[0].delay = 150;
+  viaBravo.legs[2].changeAtRisk = true;
+  viaBravo.fallback = {
+    leg: 2,
+    reason: "late",
+    from: viaBravo.legs[0].to,
+    at: "08:07",
+    journey: {
+      departure: "08:16",
+      arrival: "08:25",
+      minutes: 9,
+      transfers: 0,
+      legs: [{ ...viaBravo.legs[2], departure: "08:18", arrival: "08:25", delay: null, changeAtRisk: false }],
+    },
+    later: 10,
+  };
+}
+
+test("draws the way on if a change is missed, dotted under the journey", async ({ page }) => {
+  await answerWith(page, missedAtBravo);
+  await page.goto(search);
+  await expect(drawn(page)).toHaveCount(4); // the direct journey: no fallback, nothing dotted
+  await expect(page.locator("path.fallback-leg")).toHaveCount(0);
+
+  await journeys(page).nth(1).click();
+  // Ride, walk, ride: 3 lines + 4 dots, and the way on: its line and a dot where it is boarded.
+  await expect(drawn(page)).toHaveCount(9);
+  const line = page.locator("path.fallback-leg");
+  await expect(line).toHaveCount(1);
+  await expect(line).toHaveAttribute("stroke-dasharray", "1 10");
+  await expect(line).toHaveAttribute("stroke-linecap", "round");
+  // Drawn first, so the journey's own lines lie over it where they share a street.
+  await expect(drawn(page).first()).toHaveClass(/fallback-leg/);
+  const dot = page.locator("path.fallback-stop");
+  await expect(dot).toHaveCount(1);
+  // Under the journey's own dot at Bravo (2), so the tooltip is asked for directly.
+  await dot.dispatchEvent("mouseover");
+  await expect(page.locator(".leaflet-tooltip")).toHaveText("If you miss it: 08:18 Bravo (2)");
+
+  // Another journey without one takes it off again.
+  await journeys(page).nth(0).click();
+  await expect(page.locator("path.fallback-leg, path.fallback-stop")).toHaveCount(0);
+});
+
+test("'Show on map' selects the journey and zooms the map to the way on", async ({ page }) => {
+  await answerWith(page, missedAtBravo);
+  await page.goto(search);
+  await expect(journeys(page).nth(0)).toHaveAttribute("aria-selected", "true");
+  const button = journeys(page).nth(1).getByRole("button", { name: "Show on map" });
+  await button.click();
+  await expect(journeys(page).nth(1)).toHaveAttribute("aria-selected", "true");
+  const line = page.locator("path.fallback-leg");
+  await expect(line).toHaveCount(1);
+  await page.waitForTimeout(400); // Leaflet's zoom animation
+  const zoomed = (await line.boundingBox())!;
+  const map = (await page.locator("#map").boundingBox())!;
+  expect(zoomed.x).toBeGreaterThanOrEqual(map.x - 1);
+  expect(zoomed.x + zoomed.width).toBeLessThanOrEqual(map.x + map.width + 1);
+  expect(zoomed.y).toBeGreaterThanOrEqual(map.y - 1);
+  expect(zoomed.y + zoomed.height).toBeLessThanOrEqual(map.y + map.height + 1);
+  // Centred on the way on (Leaflet zooms in whole steps, so its size alone may not change).
+  const offCentre = (box: { x: number; y: number; width: number; height: number }) =>
+    Math.hypot(box.x + box.width / 2 - (map.x + map.width / 2), box.y + box.height / 2 - (map.y + map.height / 2));
+  expect(offCentre(zoomed)).toBeLessThan(3);
+
+  // Selecting the journey shows all of it again: centred on the whole journey instead.
+  await journeys(page).nth(1).locator("h2").click();
+  await page.waitForTimeout(400);
+  expect(offCentre((await line.boundingBox())!)).toBeGreaterThan(20);
+});
+
+test("draws a cancelled ride faded, and the way on without it", async ({ page }) => {
+  await answerWith(page, (body) => {
+    body.live = "on";
+    const direct = body.journeys[0];
+    direct.legs[0].canceled = true;
+    direct.legs[0].delay = 0;
+    const wayOn = structuredClone(body.journeys[1]);
+    wayOn.legs[2].path = [[50.0101, 14.001], [50.02, 14.3], [50.03, 14.0]]; // a detour east, off the bus's route
+    direct.fallback = { leg: 0, reason: "canceled", from: direct.legs[0].from, at: "08:05", journey: wayOn, later: -15 };
+  });
+  await page.goto(search);
+  const canceled = page.locator("path.canceled-leg");
+  await expect(canceled).toHaveCount(1);
+  await expect(canceled).toHaveAttribute("stroke-opacity", "0.35");
+  // The way on: tram 1, the walk, bus 200; dots where the two rides are boarded.
+  await expect(page.locator("path.fallback-leg")).toHaveCount(3);
+  await expect(page.locator('path.fallback-leg[stroke-dasharray="1 7"]')).toHaveCount(1); // the walk
+  await expect(page.locator("path.fallback-stop")).toHaveCount(2);
+  // The map fits the way on too, its detour included.
+  await page.waitForTimeout(400); // Leaflet's zoom animation
+  const map = (await page.locator("#map").boundingBox())!;
+  for (const path of await page.locator("path.fallback-leg").all()) {
+    const box = (await path.boundingBox())!;
+    expect(box.x).toBeGreaterThanOrEqual(map.x - 1);
+    expect(box.y).toBeGreaterThanOrEqual(map.y - 1);
+    expect(box.x + box.width).toBeLessThanOrEqual(map.x + map.width + 1);
+    expect(box.y + box.height).toBeLessThanOrEqual(map.y + map.height + 1);
+  }
+  await canceled.dispatchEvent("mouseover");
+  await expect(page.locator(".leaflet-tooltip")).toHaveText("bus 300 (canceled)");
+});
+
+test("no 'Show on map' when nothing goes on", async ({ page }) => {
+  await answerWith(page, (body) => {
+    body.live = "on";
+    body.journeys[1].legs[2].changeAtRisk = true;
+    body.journeys[1].fallback = { leg: 2, from: body.journeys[1].legs[0].to, at: "08:30", journey: null, later: null };
+  });
+  await page.goto(search);
+  await expect(page.locator(".fallback")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Show on map" })).toHaveCount(0);
+  await journeys(page).nth(1).click();
+  await expect(page.locator("path.fallback-leg")).toHaveCount(0);
 });

@@ -295,7 +295,7 @@ function journeyItem(journey, index) {
       row.append(text);
       if (leg.canceled) row.append(el("span", "risk", `${leg.mode} ${leg.line} at ${leg.departure} is canceled`));
       else if (leg.changeAtRisk) row.append(el("span", "risk", "The vehicle before is late: this change may be missed"));
-      if (journey.fallback?.leg === journey.legs.indexOf(leg)) row.append(fallbackLine(journey.fallback));
+      if (journey.fallback?.leg === journey.legs.indexOf(leg)) row.append(fallbackLine(journey.fallback, index));
       if (leg.passed.length > 0) row.append(passedList(leg.passed));
     }
     legs.append(row);
@@ -335,9 +335,9 @@ function boardUrl(stop, time) {
  * Under a cancelled ride or a change at risk: how to go on without it, from where the ride
  * before leaves one (or where the journey starts), with a link that searches from there.
  */
-function fallbackLine(fallback) {
+function fallbackLine(fallback, index) {
   const box = el("span", "fallback");
-  const lead = fallback.reason === "canceled" ? "Instead" : "If you miss it";
+  const lead = fallbackLead(fallback);
   const rides = fallback.journey?.legs.filter((l) => l.kind === "ride") ?? [];
   if (!fallback.journey) {
     box.append(`${lead}: nothing more from ${stopName(fallback.from)} today. `);
@@ -358,7 +358,24 @@ function fallbackLine(fallback) {
     link.href = `/?${query}`;
     box.append(link);
   }
+  // The way on is drawn with the journey (dotted); this zooms the map to it.
+  if (fallback.journey) {
+    const button = el("button", "map-link", "Show on map");
+    button.type = "button";
+    button.addEventListener("click", (event) => {
+      event.stopPropagation(); // the journey's own click would fit the map to all of it
+      select(index);
+      map.fitBounds(fallbackBounds, { padding: [30, 30] });
+      // On a phone the map is under the list.
+      $("map").scrollIntoView({ block: "nearest", behavior: "smooth" });
+    });
+    box.append(" ", button);
+  }
   return box;
+}
+
+function fallbackLead(fallback) {
+  return fallback.reason === "canceled" ? "Instead" : "If you miss it";
 }
 
 function boardLink(stop, time) {
@@ -405,15 +422,24 @@ function select(index) {
   draw(journeys[index]);
 }
 
+/** Where the selected journey's way on without its ride at risk is drawn ([] when there's none). */
+let fallbackBounds = [];
+
 function draw(journey) {
   drawn.clearLayers();
-  const bounds = [];
+  // First, so the journey itself is drawn over it where the two share a street.
+  fallbackBounds = journey.fallback?.journey ? drawFallback(journey.fallback) : [];
+  const bounds = [...fallbackBounds];
   journey.legs.forEach((leg, i) => {
+    const canceled = leg.kind === "ride" && leg.canceled;
     const line =
       leg.kind === "walk"
         ? L.polyline(leg.path, { color: "#6b7280", weight: 4, dashArray: "6 6" })
-        : L.polyline(leg.path, { color: color(leg.color) ?? "#0b5cad", weight: 6, opacity: 0.9 });
-    line.bindTooltip(leg.kind === "walk" ? `walk ${leg.minutes} min` : `${leg.mode} ${leg.line}`);
+        : canceled
+          ? // Faded and broken: it won't run.
+            L.polyline(leg.path, { color: color(leg.color) ?? "#0b5cad", weight: 6, opacity: 0.35, dashArray: "12 8", className: "canceled-leg" })
+          : L.polyline(leg.path, { color: color(leg.color) ?? "#0b5cad", weight: 6, opacity: 0.9 });
+    line.bindTooltip(leg.kind === "walk" ? `walk ${leg.minutes} min` : `${leg.mode} ${leg.line}${canceled ? " (canceled)" : ""}`);
     line.addTo(drawn);
     bounds.push(...leg.path);
     // Small dots in the line's colour where the vehicle stops on the way.
@@ -445,6 +471,36 @@ function draw(journey) {
     .bindPopup(dotPopup(last.to, last.arrival))
     .addTo(drawn);
   map.fitBounds(bounds, { padding: [30, 30] });
+}
+
+/**
+ * The way on if a change is missed (or a ride is cancelled), dotted in each line's colour, with
+ * a small dot where each of its rides is boarded. Returns the points drawn, for fitting the map.
+ */
+function drawFallback(fallback) {
+  const lead = fallbackLead(fallback);
+  const points = [];
+  for (const leg of fallback.journey.legs) {
+    const ride = leg.kind === "ride";
+    const lineColor = ride ? (color(leg.color) ?? "#0b5cad") : "#6b7280";
+    L.polyline(leg.path, {
+      color: lineColor,
+      weight: ride ? 5 : 3,
+      opacity: 0.85,
+      dashArray: ride ? "1 10" : "1 7",
+      lineCap: "round",
+      className: "fallback-leg",
+    })
+      .bindTooltip(`${lead}: ${ride ? `${leg.mode} ${leg.line} at ${leg.departure}` : `walk ${leg.minutes} min`}`)
+      .addTo(drawn);
+    points.push(...leg.path);
+    if (!ride) continue;
+    L.circleMarker([leg.from.lat, leg.from.lon], { radius: 4, color: lineColor, weight: 2, fillColor: "#fff", fillOpacity: 1, className: "fallback-stop" })
+      .bindTooltip(`${lead}: ${leg.departure} ${stopName(leg.from)}`)
+      .bindPopup(dotPopup(leg.from, leg.departure))
+      .addTo(drawn);
+  }
+  return points;
 }
 
 if (params.get("from") && params.get("to")) search();
