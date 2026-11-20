@@ -358,3 +358,22 @@ test("the warning is in the popup too, for a tap on a phone", async ({ page }) =
   expect(tip.x).toBeGreaterThanOrEqual(map.x);
   expect(tip.x + tip.width).toBeLessThanOrEqual(map.x + map.width);
 });
+
+test("names from the feed are shown as text in the map's tooltips, not as HTML", async ({ page }) => {
+  await answerWith(page, (body) => {
+    const ride = body.journeys[0].legs[0]; // bus 300, Alpha -> Delta
+    ride.to.name = "<b>X</b>";
+    ride.line = "<i>300</i>";
+  });
+  await page.goto(search);
+  await expect(drawn(page)).toHaveCount(4);
+  const tooltip = page.locator(".leaflet-tooltip");
+  // The dot at the end of the journey.
+  await page.locator('.leaflet-overlay-pane path[fill="#1c2430"]').dispatchEvent("mouseover");
+  await expect(tooltip).toHaveText(/ <b>X<\/b>$/);
+  await expect(tooltip.locator("b")).toHaveCount(0);
+  // The ride's line.
+  await drawn(page).first().dispatchEvent("mouseover");
+  await expect(tooltip.last()).toHaveText("bus <i>300</i>");
+  await expect(page.locator(".leaflet-tooltip i")).toHaveCount(0);
+});
