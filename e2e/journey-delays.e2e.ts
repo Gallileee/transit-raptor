@@ -192,8 +192,9 @@ test("draws the way on if a change is missed, dotted under the journey", async (
   await expect(page.locator("path.fallback-leg")).toHaveCount(0);
 
   await journeys(page).nth(1).click();
-  // Ride, walk, ride: 3 lines + 4 dots, and the way on: its line and a dot where it is boarded.
-  await expect(drawn(page)).toHaveCount(9);
+  // Ride, walk, ride: 3 lines + 4 dots, the way on: its line and a dot where it is boarded, and
+  // the warning (a ring and its halo) where the bus at risk is boarded.
+  await expect(drawn(page)).toHaveCount(11);
   const line = page.locator("path.fallback-leg");
   await expect(line).toHaveCount(1);
   await expect(line).toHaveAttribute("stroke-dasharray", "1 10");
@@ -256,16 +257,19 @@ test("draws a cancelled ride faded, and the way on without it", async ({ page })
   await expect(page.locator("path.fallback-leg")).toHaveCount(3);
   await expect(page.locator('path.fallback-leg[stroke-dasharray="1 7"]')).toHaveCount(1); // the walk
   await expect(page.locator("path.fallback-stop")).toHaveCount(2);
-  // The map fits the way on too, its detour included.
-  await page.waitForTimeout(400); // Leaflet's zoom animation
-  const map = (await page.locator("#map").boundingBox())!;
-  for (const path of await page.locator("path.fallback-leg").all()) {
-    const box = (await path.boundingBox())!;
-    expect(box.x).toBeGreaterThanOrEqual(map.x - 1);
-    expect(box.y).toBeGreaterThanOrEqual(map.y - 1);
-    expect(box.x + box.width).toBeLessThanOrEqual(map.x + map.width + 1);
-    expect(box.y + box.height).toBeLessThanOrEqual(map.y + map.height + 1);
-  }
+  // The map fits the way on too, its detour included. Asked again until Leaflet's zoom has
+  // settled: a fixed wait read the lines mid-animation on a busy machine.
+  const outside = async () => {
+    const map = (await page.locator("#map").boundingBox())!;
+    const out = [];
+    for (const path of await page.locator("path.fallback-leg").all()) {
+      const box = (await path.boundingBox())!;
+      if (box.x < map.x - 1 || box.y < map.y - 1 || box.x + box.width > map.x + map.width + 1 || box.y + box.height > map.y + map.height + 1)
+        out.push(box);
+    }
+    return out;
+  };
+  await expect.poll(outside).toEqual([]);
   await canceled.dispatchEvent("mouseover");
   await expect(page.locator(".leaflet-tooltip")).toHaveText("bus 300 (canceled)");
 });
@@ -281,4 +285,76 @@ test("no 'Show on map' when nothing goes on", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Show on map" })).toHaveCount(0);
   await journeys(page).nth(1).click();
   await expect(page.locator("path.fallback-leg")).toHaveCount(0);
+});
+
+test("marks the change at risk on the map, naming the late vehicle", async ({ page }) => {
+  await answerWith(page, missedAtBravo);
+  await page.goto(search);
+  await expect(page.locator("path.risk-stop, path.risk-halo")).toHaveCount(0); // the direct one is fine
+
+  await journeys(page).nth(1).click();
+  const ring = page.locator("path.risk-stop");
+  await expect(ring).toHaveCount(1);
+  await expect(page.locator("path.risk-halo")).toHaveCount(1);
+  // Drawn last, over every line and dot, so nothing hides it.
+  await expect(drawn(page).last()).toHaveClass(/risk-stop/);
+  // Red from the stylesheet (--error), not Leaflet's blue default.
+  await expect(ring).toHaveCSS("stroke", "rgb(180, 35, 24)");
+  await ring.dispatchEvent("mouseover");
+  await expect(page.locator(".leaflet-tooltip")).toHaveText("08:08 Bravo (2) · this change may be missed: tram 1 is +2 min late");
+  // Where the bus is boarded, which is where the way on starts too.
+  // (Asked again until the map's zoom has settled.)
+  const apart = async () => {
+    const box = (await ring.boundingBox())!;
+    const wayOn = (await page.locator("path.fallback-stop").boundingBox())!;
+    return Math.hypot(box.x + box.width / 2 - (wayOn.x + wayOn.width / 2), box.y + box.height / 2 - (wayOn.y + wayOn.height / 2));
+  };
+  await expect.poll(apart).toBeLessThan(1);
+
+  await journeys(page).nth(0).click();
+  await expect(page.locator("path.risk-stop, path.risk-halo")).toHaveCount(0);
+});
+
+test("marks a cancelled ride on the map, and says only that when its change is at risk too", async ({ page }) => {
+  await answerWith(page, (body) => {
+    body.live = "on";
+    body.journeys[0].legs[0].canceled = true;
+    body.journeys[0].legs[0].delay = 0;
+    body.journeys[0].legs[0].changeAtRisk = true;
+  });
+  await page.goto(search);
+  const ring = page.locator("path.risk-stop");
+  await expect(ring).toHaveCount(1);
+  await ring.dispatchEvent("mouseover");
+  await expect(page.locator(".leaflet-tooltip")).toHaveText("08:05 Alpha · bus 300 is canceled");
+});
+
+test("a change at risk with no delay to name still says why", async ({ page }) => {
+  await answerWith(page, (body) => {
+    body.live = "on";
+    body.journeys[1].legs[0].delay = 20; // on time by the minute: not the one to blame
+    body.journeys[1].legs[2].changeAtRisk = true;
+  });
+  await page.goto(search);
+  await journeys(page).nth(1).click();
+  const ring = page.locator("path.risk-stop");
+  await ring.dispatchEvent("mouseover");
+  await expect(page.locator(".leaflet-tooltip")).toHaveText("08:08 Bravo (2) · this change may be missed: the vehicle before is late");
+});
+
+test("the warning is in the popup too, for a tap on a phone", async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await answerWith(page, missedAtBravo);
+  await page.goto(search);
+  await journeys(page).nth(1).click();
+  await page.locator("path.risk-stop").dispatchEvent("click");
+  const popup = page.locator(".leaflet-popup-content");
+  await expect(popup).toHaveText("This change may be missed: tram 1 is +2 min late08:08 Bravo (2)Departures from here");
+  await expect(popup.locator(".risk")).toHaveCSS("color", "rgb(180, 35, 24)");
+  // The tooltip sits above the dot and wraps, so it stays on a narrow map.
+  await page.locator("path.risk-stop").dispatchEvent("mouseover");
+  const tip = (await page.locator(".leaflet-tooltip").boundingBox())!;
+  const map = (await page.locator("#map").boundingBox())!;
+  expect(tip.x).toBeGreaterThanOrEqual(map.x);
+  expect(tip.x + tip.width).toBeLessThanOrEqual(map.x + map.width);
 });

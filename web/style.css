@@ -465,6 +465,23 @@ select:focus-visible,
   font-weight: 600;
 }
 
+/* On the map: where a ride at risk (or a cancelled one) is boarded. */
+.leaflet-overlay-pane path.risk-stop {
+  stroke: var(--error);
+}
+.leaflet-tooltip.risk-tooltip {
+  white-space: normal;
+  width: max-content;
+  max-width: min(240px, 70vw);
+}
+.dot-popup .risk {
+  color: #b42318; /* the light theme's --error: the popup is white in both */
+  font-weight: 600;
+}
+.leaflet-overlay-pane path.risk-halo {
+  fill: var(--error);
+}
+
 /* A train's track for the day, from live data. */
 .departures .platform.live {
   font-weight: 700;
