@@ -1,5 +1,45 @@
 # Progress log
 
+## 2026-11-20 (scheduled run): the change at risk, marked on the map
+
+Why: next step 2 ("highlight the ride at risk on the map"). The list said a change might be
+missed, but on the map the stop where it happens looked like every other change.
+
+Done (web only, no API change):
+- `riskWarning(legs, i)` and `drawRisk` (app.js): where a ride with `changeAtRisk` or
+  `canceled` is boarded, a red ring (`risk-stop`, stroke from `--error`, so it follows dark mode)
+  over a soft halo (`risk-halo`, not clickable), drawn after everything else so no line or dot
+  covers it. Tooltip "08:08 Bravo (2) · this change may be missed: tram 1 is +2 min late": the
+  nearest earlier ride with a delay of a whole minute or more, else "the vehicle before is late";
+  a cancelled ride says "bus 300 is canceled" (and only that, as the list does).
+- On a phone a tap opens the popup, not the tooltip, so the popup starts with the warning
+  (fixed light-theme red: Leaflet's popups are white in both themes). The tooltip sits above the
+  dot and wraps (`risk-tooltip`): the first screenshot at 375 px had it running off the map.
+- Fixed a flaky test on the way: "draws a cancelled ride faded" read the lines' boxes after a
+  fixed 400 ms wait for Leaflet's zoom and failed 6 of 12 repeats on main (1.5 px outside the
+  map, mid-animation). It now asks again until the map has settled (`expect.poll`): 16 of 16.
+- e2e: 4 new (ring + halo, drawn last, red, tooltip, at the way on's boarding dot, gone on
+  another journey; cancelled; no delay to name; popup and tooltip on a 375 px phone), 1 count
+  updated (9 -> 11 paths).
+
+Verified: typecheck clean, 263 unit, 47 e2e (Edge) all passed; journey-delays.e2e.ts 75 of 75
+over 5 repeats. Mutations, 5 of 5 caught: the fallback left out of the map's bounds (the
+polled test still catches it), cancelled not marked, an on-time vehicle blamed, every ride
+marked, no red style. Screenshots via a temporary Playwright spec (deleted): desktop light,
+375 px dark with tooltip and popup, look right.
+
+Not verified: real PID journeys with live delays in the browser (needs the Golemio key and the
+live server, not started in this unattended run). To check: `node --env-file-if-exists=.env
+dist/bin.js serve --gtfs data/pid`, plan across a busy change in the evening rush (e.g. Anděl ->
+Letiště), select a journey with a warning and look at the ring on a phone.
+
+Next steps:
+1. The browser check above, on the real feed with the Golemio key (covers 2026-11-18 too).
+2. Tapping the warning in the list centres the map on the ring (as "Show on map" does for the
+   way on).
+3. Another feed with untimed stops, to try `interpolateTimes` on real gaps (download needs the
+   owner's approval).
+
 ## 2026-11-18 (scheduled run): the way on, drawn on the map
 
 Why: next step from the list ("draw the fallback on the map"). Under a change at risk or a

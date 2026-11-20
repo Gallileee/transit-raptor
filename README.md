@@ -266,7 +266,10 @@ cancelled (RAPTOR's `Query.skip`). `/api/plan` has `live`, each ride `delay`, `c
 `at`, `journey` or null when nothing goes on from there, `later` in minutes). On the map the
 way on is drawn dotted in each line's colour, under the journey (where they share a street
 the journey stays on top), with a small dot where each of its rides is boarded; a cancelled
-ride is drawn faded and broken. The map fits both, and "Show on map" next to the fallback
+ride is drawn faded and broken. Where a ride at risk (or a cancelled one) is boarded, a red
+ring with a halo lies over everything else; its tooltip and popup say why ("this change may be
+missed: tram 1 is +2 min late", or "the vehicle before is late" when no delay of a minute or
+more is known). The map fits both, and "Show on map" next to the fallback
 zooms to the way on alone (and scrolls to the map on a phone). To run with the
 key:
 
@@ -333,7 +336,8 @@ while the server doesn't answer, an ambiguous stop, and the links between the pa
 the board at that time, which doesn't refresh, and back to now; the next day after midnight.
 `e2e/journey-delays.e2e.ts`: live delays, changes at risk, cancelled rides and their
 fallbacks, given to the page by rewriting `/api/plan`'s answer; the way on drawn dotted under
-the journey, a cancelled ride faded, "Show on map" zooming to the way on. It runs without the internet: Leaflet is served from `node_modules`
+the journey, a cancelled ride faded, "Show on map" zooming to the way on, the warning ring at
+the change at risk (its tooltip, popup on a phone, drawn last). It runs without the internet: Leaflet is served from `node_modules`
 (the page's integrity hashes prove it is the cdnjs file), map tiles are a blank image, and any
 other outside request, console error or exception fails the test. CI runs it as its own job
 and keeps the report and traces when it fails.

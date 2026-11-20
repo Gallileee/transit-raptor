@@ -470,7 +470,45 @@ function draw(journey) {
     .bindTooltip(`${last.arrival} ${stopName(last.to)}`)
     .bindPopup(dotPopup(last.to, last.arrival))
     .addTo(drawn);
+  // Last, so they lie over every line and dot: where the journey may break.
+  journey.legs.forEach((leg, i) => {
+    const warning = riskWarning(journey.legs, i);
+    if (warning) drawRisk(leg, warning);
+  });
   map.fitBounds(bounds, { padding: [30, 30] });
+}
+
+/**
+ * What may go wrong where a ride is boarded, for the map: "bus 300 is canceled", or for a change
+ * at risk the vehicle before that is late ("tram 1 is +2 min late"). Undefined when nothing is.
+ */
+function riskWarning(legs, index) {
+  const leg = legs[index];
+  if (leg.kind !== "ride") return undefined;
+  if (leg.canceled) return `${leg.mode} ${leg.line} is canceled`;
+  if (!leg.changeAtRisk) return undefined;
+  const late = legs
+    .slice(0, index)
+    .reverse()
+    .find((l) => l.kind === "ride" && !l.canceled && l.delay !== null && Math.trunc(l.delay / 60) > 0);
+  const why = late ? `${late.mode} ${late.line} is ${delayText(late.delay)} late` : "the vehicle before is late";
+  return `this change may be missed: ${why}`;
+}
+
+/** A warning ring where a ride at risk is boarded, with a soft halo so it is seen at a glance. */
+function drawRisk(leg, warning) {
+  const at = [leg.from.lat, leg.from.lon];
+  // The colours come from the stylesheet (--error), so they follow dark mode.
+  L.circleMarker(at, { radius: 16, stroke: false, fillOpacity: 0.2, interactive: false, className: "risk-halo" }).addTo(drawn);
+  // On a phone a tap opens the popup, not the tooltip: the warning is said in both.
+  const popup = dotPopup(leg.from, leg.departure);
+  popup.prepend(el("span", "risk", warning[0].toUpperCase() + warning.slice(1)), el("br"));
+  L.circleMarker(at, { radius: 8, weight: 3, fillColor: "#fff", fillOpacity: 1, className: "risk-stop" })
+    // Above the dot and wrapped: on a narrow map a long line to the side runs off the edge.
+    // An element, not a string: Leaflet puts a string in as HTML, and the names come from the feed.
+    .bindTooltip(el("span", "", `${leg.departure} ${stopName(leg.from)} · ${warning}`), { direction: "top", offset: [0, -10], className: "risk-tooltip" })
+    .bindPopup(popup)
+    .addTo(drawn);
 }
 
 /**
