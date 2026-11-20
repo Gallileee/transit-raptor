@@ -1,5 +1,20 @@
 # Progress log
 
+## 2026-11-20: map tooltips show feed names as text
+
+Why: Leaflet puts a string tooltip in as HTML, and the journey lines, passed-stop dots, leg start
+dots, end dot and the way on's lines and dots all passed template strings with stop and line
+names from the GTFS feed. A name like `<b>X</b>` became markup (the CSP limits the harm, but it
+was still unsafe). Only the risk ring already passed an element.
+
+Done (web only): every `bindTooltip` in app.js now gets `el("span", "", text)`, which sets
+`textContent`. departures.js has no tooltips.
+
+e2e: 1 new (a stop renamed `<b>X</b>` and a line `<i>300</i>` show literally in the end dot's and
+the line's tooltips, with no `b`/`i` element); it fails on main ("08:30 X").
+
+Verified: build clean, 263 unit, 48 e2e (Edge) all passed.
+
 ## 2026-11-20 (scheduled run): the change at risk, marked on the map
 
 Why: next step 2 ("highlight the ride at risk on the map"). The list said a change might be
