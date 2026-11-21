@@ -1,5 +1,51 @@
 # Progress log
 
+## 2026-11-21 (scheduled run): "Show stop on map" under the warning
+
+Why: next step 2 ("tapping the warning in the list centres the map on the ring"). The ring was on
+the map, but from the list one had to find it: on a phone the map is under the list, at the
+whole journey's zoom.
+
+Done (web only, no API change):
+- `riskLine` (app.js): the warning under a cancelled ride or a change at risk ends with a "Show
+  stop on map" button (a link's look, normal weight under the bold red text). It selects the
+  journey, zooms to the ring at street level (zoom 17, or closer if the map already is), opens
+  the ring's popup (the warning and the departures link) and scrolls the map into view.
+  `riskRings` keeps the selected journey's rings by leg index; `drawRisk` returns its ring.
+- Found while testing: Leaflet ignores a zoom asked for during its zoom animation, so the button
+  (and the old "Show on map") did nothing when selecting the journey first fitted the map with an
+  animated zoom, or right after a search. Now `select(index, { fit: false })` leaves the map for
+  the button to move, and `whenStill` waits a frame and, if a zoom animation is running, for its
+  `zoomend`.
+- `prefers-reduced-motion`: the buttons and the fit on selecting a journey jump instead of
+  animating; the scroll to the map is instant.
+- e2e: 6 new (zoom 17 + centred + popup; cancelled ride from the keyboard, focus kept; no zoom
+  out of a closer view; reduced motion for the button and for selecting a journey; phone scroll;
+  both buttons with a zoom animation in the way), 3 texts updated, "Show on map" test reads
+  after `expect.poll` instead of a fixed 400 ms wait. The zoom is read from Leaflet's
+  `.leaflet-proxy` (scale 2^(zoom-1), set at each move's end): the tiles kept the old level a
+  while and gave flaky reads.
+
+Verified: typecheck clean, 263 unit, 53 e2e (Edge) passed, twice in a row; journey-delays.e2e.ts
+105 of 105 over 5 repeats. Mutations, 9 of 10 caught: never zooming out (only once that test
+ran with reduced motion: `expect.poll` had passed on its first sample, before the animation),
+always animating, no popup, no scroll, click bubbling to the journey, not selecting, fitting
+first for the ring, not waiting for the animation, fit ignoring reduced motion. The one left,
+fitting first before "Show on map", is equivalent now (`whenStill` waits for that fit too; it
+only saves an animation). Screenshots via a temporary Playwright spec (deleted): desktop light
+and 375 px dark after the click, ring and popup in view.
+
+Not verified: real PID journeys in the browser (starting the demo was declined in this unattended
+run). To check: `node --env-file-if-exists=.env dist/bin.js serve --gtfs data/pid`, plan across a
+busy change in the evening rush (e.g. Anděl -> Letiště), press "Show stop on map" on a phone.
+
+Next steps:
+1. The browser check on the real feed with the Golemio key (covers 2026-11-18 and 2026-11-20
+   too).
+2. Open PR #43 (feed names in map tooltips as text) waits for the owner: merge it or close it.
+3. Another feed with untimed stops, to try `interpolateTimes` on real gaps (download needs the
+   owner's approval).
+
 ## 2026-11-20 (scheduled run): the change at risk, marked on the map
 
 Why: next step 2 ("highlight the ride at risk on the map"). The list said a change might be

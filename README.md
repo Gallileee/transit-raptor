@@ -270,8 +270,11 @@ ride is drawn faded and broken. Where a ride at risk (or a cancelled one) is boa
 ring with a halo lies over everything else; its tooltip and popup say why ("this change may be
 missed: tram 1 is +2 min late", or "the vehicle before is late" when no delay of a minute or
 more is known). The map fits both, and "Show on map" next to the fallback
-zooms to the way on alone (and scrolls to the map on a phone). To run with the
-key:
+zooms to the way on alone (and scrolls to the map on a phone). "Show stop on map" next to the
+warning in the list zooms in on the ring (street level, never further out than the map already
+is) and opens its popup. Both wait for a zoom animation still running (Leaflet drops a zoom asked
+for during one), and with `prefers-reduced-motion` the map jumps instead of gliding. To run with
+the key:
 
 ```bash
 echo "GOLEMIO_API_KEY=..." > .env      # .env is in .gitignore
@@ -337,7 +340,9 @@ the board at that time, which doesn't refresh, and back to now; the next day aft
 `e2e/journey-delays.e2e.ts`: live delays, changes at risk, cancelled rides and their
 fallbacks, given to the page by rewriting `/api/plan`'s answer; the way on drawn dotted under
 the journey, a cancelled ride faded, "Show on map" zooming to the way on, the warning ring at
-the change at risk (its tooltip, popup on a phone, drawn last). It runs without the internet: Leaflet is served from `node_modules`
+the change at risk (its tooltip, popup on a phone, drawn last), "Show stop on map" (zoom read
+from Leaflet's proxy element, keyboard, phone scroll, reduced motion, a zoom animation in
+progress). It runs without the internet: Leaflet is served from `node_modules`
 (the page's integrity hashes prove it is the cdnjs file), map tiles are a blank image, and any
 other outside request, console error or exception fails the test. CI runs it as its own job
 and keeps the report and traces when it fails.
