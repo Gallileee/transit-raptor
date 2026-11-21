@@ -293,9 +293,10 @@ function journeyItem(journey, index) {
       if (stepFree && leg.access === "unknown") text.append(el("span", "unconfirmed", " · step-free access not confirmed"));
       if (leg.access === "yes") badge.title += " · step-free";
       row.append(text);
-      if (leg.canceled) row.append(el("span", "risk", `${leg.mode} ${leg.line} at ${leg.departure} is canceled`));
-      else if (leg.changeAtRisk) row.append(el("span", "risk", "The vehicle before is late: this change may be missed"));
-      if (journey.fallback?.leg === journey.legs.indexOf(leg)) row.append(fallbackLine(journey.fallback, index));
+      const legIndex = journey.legs.indexOf(leg);
+      if (leg.canceled) row.append(riskLine(`${leg.mode} ${leg.line} at ${leg.departure} is canceled`, index, legIndex));
+      else if (leg.changeAtRisk) row.append(riskLine("The vehicle before is late: this change may be missed", index, legIndex));
+      if (journey.fallback?.leg === legIndex) row.append(fallbackLine(journey.fallback, index));
       if (leg.passed.length > 0) row.append(passedList(leg.passed));
     }
     legs.append(row);
@@ -364,14 +365,58 @@ function fallbackLine(fallback, index) {
     button.type = "button";
     button.addEventListener("click", (event) => {
       event.stopPropagation(); // the journey's own click would fit the map to all of it
-      select(index);
-      map.fitBounds(fallbackBounds, { padding: [30, 30] });
-      // On a phone the map is under the list.
-      $("map").scrollIntoView({ block: "nearest", behavior: "smooth" });
+      select(index, { fit: false });
+      showMap();
+      whenStill(() => map.fitBounds(fallbackBounds, { padding: [30, 30], animate: !reducedMotion() }));
     });
     box.append(" ", button);
   }
   return box;
+}
+
+/**
+ * The warning under a cancelled ride or a change at risk, with a button that zooms the map to
+ * the red ring where it is boarded and opens its popup (the warning, the departures from there).
+ */
+function riskLine(text, index, legIndex) {
+  const line = el("span", "risk", `${text} `);
+  const button = el("button", "map-link", "Show stop on map");
+  button.type = "button";
+  button.addEventListener("click", (event) => {
+    event.stopPropagation(); // the journey's own click would fit the map to all of it
+    select(index, { fit: false });
+    const ring = riskRings.get(legIndex);
+    if (!ring) return;
+    showMap();
+    whenStill(() => {
+      // Close enough to see the platforms and the streets around them, never further out.
+      map.setView(ring.getLatLng(), Math.max(map.getZoom(), RISK_ZOOM), { animate: !reducedMotion() });
+      ring.openPopup();
+    });
+  });
+  line.append(button);
+  return line;
+}
+
+const RISK_ZOOM = 17;
+
+const reducedMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/**
+ * Runs `move` once the map isn't zooming: Leaflet ignores a zoom asked for during its zoom
+ * animation (after a search, or a click on another journey). It starts that animation on the next
+ * frame, so this looks a frame later too.
+ */
+function whenStill(move) {
+  requestAnimationFrame(() => {
+    if (map.getPane("mapPane").classList.contains("leaflet-zoom-anim")) map.once("zoomend", move);
+    else move();
+  });
+}
+
+/** On a phone the map is under the list: bring it into view. */
+function showMap() {
+  $("map").scrollIntoView({ block: "nearest", behavior: reducedMotion() ? "auto" : "smooth" });
 }
 
 function fallbackLead(fallback) {
@@ -417,16 +462,24 @@ function passedList(passed) {
   return details;
 }
 
-function select(index) {
+/**
+ * Selects a journey and draws it. `fit: false` leaves the map where it is, for a caller that
+ * moves it itself: while Leaflet animates a zoom it ignores the next one, so fitting the whole
+ * journey first would swallow the caller's own move.
+ */
+function select(index, { fit = true } = {}) {
   [...results.children].forEach((item, i) => item.setAttribute("aria-selected", String(i === index)));
-  draw(journeys[index]);
+  draw(journeys[index], { fit });
 }
 
 /** Where the selected journey's way on without its ride at risk is drawn ([] when there's none). */
 let fallbackBounds = [];
+/** The selected journey's red rings, by the index of the ride at risk they mark. */
+const riskRings = new Map();
 
-function draw(journey) {
+function draw(journey, { fit = true } = {}) {
   drawn.clearLayers();
+  riskRings.clear();
   // First, so the journey itself is drawn over it where the two share a street.
   fallbackBounds = journey.fallback?.journey ? drawFallback(journey.fallback) : [];
   const bounds = [...fallbackBounds];
@@ -475,9 +528,9 @@ function draw(journey) {
   // Last, so they lie over every line and dot: where the journey may break.
   journey.legs.forEach((leg, i) => {
     const warning = riskWarning(journey.legs, i);
-    if (warning) drawRisk(leg, warning);
+    if (warning) riskRings.set(i, drawRisk(leg, warning));
   });
-  map.fitBounds(bounds, { padding: [30, 30] });
+  if (fit) map.fitBounds(bounds, { padding: [30, 30], animate: !reducedMotion() });
 }
 
 /**
@@ -497,7 +550,10 @@ function riskWarning(legs, index) {
   return `this change may be missed: ${why}`;
 }
 
-/** A warning ring where a ride at risk is boarded, with a soft halo so it is seen at a glance. */
+/**
+ * A warning ring where a ride at risk is boarded, with a soft halo so it is seen at a glance.
+ * Returns the ring.
+ */
 function drawRisk(leg, warning) {
   const at = [leg.from.lat, leg.from.lon];
   // The colours come from the stylesheet (--error), so they follow dark mode.
@@ -505,7 +561,7 @@ function drawRisk(leg, warning) {
   // On a phone a tap opens the popup, not the tooltip: the warning is said in both.
   const popup = dotPopup(leg.from, leg.departure);
   popup.prepend(el("span", "risk", warning[0].toUpperCase() + warning.slice(1)), el("br"));
-  L.circleMarker(at, { radius: 8, weight: 3, fillColor: "#fff", fillOpacity: 1, className: "risk-stop" })
+  return L.circleMarker(at, { radius: 8, weight: 3, fillColor: "#fff", fillOpacity: 1, className: "risk-stop" })
     // Above the dot and wrapped: on a narrow map a long line to the side runs off the edge.
     // An element, not a string: Leaflet puts a string in as HTML, and the names come from the feed.
     .bindTooltip(el("span", "", `${leg.departure} ${stopName(leg.from)} · ${warning}`), { direction: "top", offset: [0, -10], className: "risk-tooltip" })

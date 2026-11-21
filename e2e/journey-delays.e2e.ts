@@ -32,7 +32,7 @@ test("shows each ride's delay and warns about a change that may be missed", asyn
   await expect(direct.locator(".leg").first().locator(".delay")).toHaveClass("delay on-time");
   await expect(viaBravo.locator(".leg").nth(0).locator(".delay")).toHaveText("+2 min");
   await expect(viaBravo.locator(".leg").nth(0).locator(".delay")).toHaveCSS("font-weight", "600");
-  await expect(viaBravo.locator(".leg").nth(2).locator(".risk")).toHaveText("The vehicle before is late: this change may be missed");
+  await expect(viaBravo.locator(".leg").nth(2).locator(".risk")).toHaveText("The vehicle before is late: this change may be missed Show stop on map");
   await expect(viaBravo.locator(".leg").nth(2).locator(".delay")).toHaveCount(0); // its own delay isn't known
   await expect(page.locator(".risk")).toHaveCount(1);
 });
@@ -47,7 +47,7 @@ test("says when a ride is cancelled", async ({ page }) => {
   await page.goto(search);
   const ride = journeys(page).first().locator(".leg").first();
   await expect(ride.locator(".risk")).toHaveCount(1);
-  await expect(ride.locator(".risk")).toHaveText("bus 300 at 08:05 is canceled");
+  await expect(ride.locator(".risk")).toHaveText("bus 300 at 08:05 is canceled Show stop on map");
   await expect(ride.locator(".delay")).toHaveCount(0);
 });
 
@@ -123,7 +123,7 @@ test("says how to go on without a cancelled ride", async ({ page }) => {
   });
   await page.goto(search);
   const ride = journeys(page).first().locator(".leg").first();
-  await expect(ride.locator(".risk")).toHaveText("bus 300 at 08:05 is canceled");
+  await expect(ride.locator(".risk")).toHaveText("bus 300 at 08:05 is canceled Show stop on map");
   await expect(ride.locator(".fallback")).toHaveText(
     "Instead: tram 1 at 08:00 from Alpha, then bus 200 at 08:08 from Bravo (2), arriving 08:15. Search from there Show on map",
   );
@@ -221,22 +221,21 @@ test("'Show on map' selects the journey and zooms the map to the way on", async 
   await expect(journeys(page).nth(1)).toHaveAttribute("aria-selected", "true");
   const line = page.locator("path.fallback-leg");
   await expect(line).toHaveCount(1);
-  await page.waitForTimeout(400); // Leaflet's zoom animation
-  const zoomed = (await line.boundingBox())!;
   const map = (await page.locator("#map").boundingBox())!;
+  // Centred on the way on (Leaflet zooms in whole steps, so its size alone may not change).
+  const offCentre = (box: { x: number; y: number; width: number; height: number }) =>
+    Math.hypot(box.x + box.width / 2 - (map.x + map.width / 2), box.y + box.height / 2 - (map.y + map.height / 2));
+  // Asked again until Leaflet's zoom has settled.
+  await expect.poll(async () => offCentre((await line.boundingBox())!)).toBeLessThan(3);
+  const zoomed = (await line.boundingBox())!;
   expect(zoomed.x).toBeGreaterThanOrEqual(map.x - 1);
   expect(zoomed.x + zoomed.width).toBeLessThanOrEqual(map.x + map.width + 1);
   expect(zoomed.y).toBeGreaterThanOrEqual(map.y - 1);
   expect(zoomed.y + zoomed.height).toBeLessThanOrEqual(map.y + map.height + 1);
-  // Centred on the way on (Leaflet zooms in whole steps, so its size alone may not change).
-  const offCentre = (box: { x: number; y: number; width: number; height: number }) =>
-    Math.hypot(box.x + box.width / 2 - (map.x + map.width / 2), box.y + box.height / 2 - (map.y + map.height / 2));
-  expect(offCentre(zoomed)).toBeLessThan(3);
 
   // Selecting the journey shows all of it again: centred on the whole journey instead.
   await journeys(page).nth(1).locator("h2").click();
-  await page.waitForTimeout(400);
-  expect(offCentre((await line.boundingBox())!)).toBeGreaterThan(20);
+  await expect.poll(async () => offCentre((await line.boundingBox())!)).toBeGreaterThan(20);
 });
 
 test("draws a cancelled ride faded, and the way on without it", async ({ page }) => {
@@ -376,4 +375,157 @@ test("names from the feed are shown as text in the map's tooltips, not as HTML",
   await drawn(page).first().dispatchEvent("mouseover");
   await expect(tooltip.last()).toHaveText("bus <i>300</i>");
   await expect(page.locator(".leaflet-tooltip i")).toHaveCount(0);
+});
+
+/**
+ * The map's zoom level once it has stopped moving. Leaflet keeps it in its "proxy" element,
+ * scaled by 2^(zoom - 1), and updates it at the end of every move.
+ */
+const mapZoom = (page: import("@playwright/test").Page) =>
+  page.locator(".leaflet-proxy").evaluate((proxy) => {
+    const scale = Number(/scale\(([\d.e+-]+)\)/.exec((proxy as HTMLElement).style.transform)?.[1]);
+    return Math.round(Math.log2(scale) + 1);
+  });
+
+/** Waits two frames: the map buttons move the map on the next one (see whenStill in app.js). */
+const frames = (page: import("@playwright/test").Page) =>
+  page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+
+/** How far a box's centre is from the map's centre, in pixels. */
+async function offMapCentre(page: import("@playwright/test").Page, box: { x: number; y: number; width: number; height: number }) {
+  const map = (await page.locator("#map").boundingBox())!;
+  return Math.hypot(box.x + box.width / 2 - (map.x + map.width / 2), box.y + box.height / 2 - (map.y + map.height / 2));
+}
+
+test("'Show stop on map' under a change at risk zooms to its ring and opens the warning", async ({ page }) => {
+  await answerWith(page, missedAtBravo);
+  await page.goto(search);
+  await expect(journeys(page).nth(0)).toHaveAttribute("aria-selected", "true");
+  const button = journeys(page).nth(1).locator(".risk").getByRole("button", { name: "Show stop on map" });
+  await button.click();
+  await expect(journeys(page).nth(1)).toHaveAttribute("aria-selected", "true");
+  const ring = page.locator("path.risk-stop");
+  await expect(ring).toHaveCount(1);
+  // Close in on the stop (street level), centred on the ring, its popup open.
+  await expect.poll(() => mapZoom(page)).toBe(17);
+  await expect.poll(async () => offMapCentre(page, (await ring.boundingBox())!)).toBeLessThan(3);
+  await expect(page.locator(".leaflet-popup-content")).toHaveText(
+    "This change may be missed: tram 1 is +2 min late08:08 Bravo (2)Departures from here",
+  );
+  // The way on keeps its own button, which still shows the whole way on.
+  await expect(journeys(page).nth(1).getByRole("button", { name: "Show on map", exact: true })).toHaveCount(1);
+});
+
+test("'Show stop on map' under a cancelled ride, from the keyboard", async ({ page }) => {
+  await answerWith(page, (body) => {
+    body.live = "on";
+    body.journeys[1].legs[2].canceled = true;
+    body.journeys[1].legs[2].delay = 0;
+  });
+  await page.goto(search);
+  const risk = journeys(page).nth(1).locator(".risk");
+  await expect(risk).toHaveText("bus 200 at 08:08 is canceled Show stop on map");
+  await expect(risk).toHaveCSS("font-weight", "600");
+  const button = risk.getByRole("button", { name: "Show stop on map" });
+  await expect(button).toHaveCSS("font-weight", "400"); // a control under the warning, not part of it
+  await button.focus();
+  await page.keyboard.press("Enter");
+  await expect(journeys(page).nth(1)).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator(".leaflet-popup-content")).toHaveText("Bus 200 is canceled08:08 Bravo (2)Departures from here");
+  await expect.poll(() => mapZoom(page)).toBe(17);
+  await expect(button).toBeFocused(); // the list keeps its place for the next key
+});
+
+test("'Show stop on map' doesn't zoom out of a closer view", async ({ page }) => {
+  // Without animations the map is where it ends up a frame after the click, so a wrong zoom
+  // on the way can't pass for the right one.
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await answerWith(page, missedAtBravo);
+  await page.goto(search);
+  const button = journeys(page).nth(1).locator(".risk").getByRole("button", { name: "Show stop on map" });
+  await button.click();
+  await frames(page);
+  expect(await mapZoom(page)).toBe(17);
+  await page.locator("#map").getByRole("button", { name: "Zoom in" }).click(); // Leaflet's own, animated
+  await expect.poll(() => mapZoom(page)).toBe(18);
+  await expect(page.locator(".leaflet-map-pane")).not.toHaveClass(/leaflet-zoom-anim/);
+  await button.click();
+  await frames(page);
+  expect(await mapZoom(page)).toBe(18);
+  const ring = page.locator("path.risk-stop");
+  expect(await offMapCentre(page, (await ring.boundingBox())!)).toBeLessThan(3);
+});
+
+test("with reduced motion, the map jumps to the stop at once", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await answerWith(page, missedAtBravo);
+  await page.goto(search);
+  await expect(page.locator("path.risk-stop")).toHaveCount(0);
+  await journeys(page).nth(1).locator(".risk").getByRole("button", { name: "Show stop on map" }).click();
+  // No animation to wait for: read a frame later, not asked again until it gets there.
+  await frames(page);
+  const ring = page.locator("path.risk-stop");
+  expect(await offMapCentre(page, (await ring.boundingBox())!)).toBeLessThan(3);
+  // Selecting a journey jumps to all of it too: no zoom animation running a few frames later.
+  await journeys(page).nth(0).locator("h2").click();
+  await frames(page);
+  expect(await mapZoom(page)).toBeLessThan(17);
+  expect(await page.locator(".leaflet-map-pane").evaluate((pane) => pane.classList.contains("leaflet-zoom-anim"))).toBe(false);
+});
+
+test("on a phone, 'Show stop on map' brings the map into view", async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 640 });
+  await answerWith(page, missedAtBravo);
+  await page.goto(search);
+  await expect(page.locator("#map")).not.toBeInViewport();
+  await journeys(page).nth(1).locator(".risk").getByRole("button", { name: "Show stop on map" }).click();
+  // All of it, not the edge a click on the button scrolls into view with it.
+  await expect(page.locator("#map")).toBeInViewport({ ratio: 0.9 });
+  await expect(page.locator(".leaflet-popup-content")).toBeVisible();
+});
+
+// Selecting another journey used to fit the map to all of it first, with an animated zoom, and
+// Leaflet ignores a zoom asked for during one: the map stayed on the whole journey.
+test("both map buttons move the map even when it has to zoom to another journey first", async ({ page }) => {
+  await answerWith(page, missedAtBravo);
+  await page.goto(search);
+  const zoomIn = page.locator("#map").getByRole("button", { name: "Zoom in" });
+  const settle = async (zoom: number) => {
+    await expect.poll(() => mapZoom(page)).toBe(zoom);
+    await expect(page.locator(".leaflet-map-pane")).not.toHaveClass(/leaflet-zoom-anim/);
+  };
+  /** The zoom once the map has stayed put for a moment (after a search or a click on a journey). */
+  const stillZoom = async () => {
+    let zoom = NaN;
+    await expect
+      .poll(async () => {
+        const before = await mapZoom(page);
+        await page.waitForTimeout(300);
+        zoom = await mapZoom(page);
+        const zooming = await page.locator(".leaflet-map-pane").evaluate((pane) => pane.classList.contains("leaflet-zoom-anim"));
+        return before === zoom && !zooming;
+      })
+      .toBe(true);
+    return zoom;
+  };
+  // Journey 1 is shown, zoomed in on it: journey 2 would fit at another zoom.
+  await expect(drawn(page)).toHaveCount(4);
+  const start = await stillZoom();
+  await zoomIn.click();
+  await settle(start + 1);
+
+  await journeys(page).nth(1).locator(".risk").getByRole("button", { name: "Show stop on map" }).click();
+  await settle(17);
+  const ring = page.locator("path.risk-stop");
+  await expect.poll(async () => offMapCentre(page, (await ring.boundingBox())!)).toBeLessThan(3);
+
+  // Back to journey 1, zoomed in on it, then the way on of journey 2.
+  await journeys(page).nth(0).locator("h2").click();
+  await expect.poll(() => mapZoom(page)).not.toBe(17);
+  const fitted = await stillZoom();
+  await zoomIn.click();
+  await settle(fitted + 1);
+  await journeys(page).nth(1).getByRole("button", { name: "Show on map", exact: true }).click();
+  const line = page.locator("path.fallback-leg");
+  await expect.poll(async () => offMapCentre(page, (await line.boundingBox())!)).toBeLessThan(3);
 });
