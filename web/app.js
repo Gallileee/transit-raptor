@@ -492,7 +492,9 @@ function draw(journey, { fit = true } = {}) {
           ? // Faded and broken: it won't run.
             L.polyline(leg.path, { color: color(leg.color) ?? "#0b5cad", weight: 6, opacity: 0.35, dashArray: "12 8", className: "canceled-leg" })
           : L.polyline(leg.path, { color: color(leg.color) ?? "#0b5cad", weight: 6, opacity: 0.9 });
-    line.bindTooltip(leg.kind === "walk" ? `walk ${leg.minutes} min` : `${leg.mode} ${leg.line}${canceled ? " (canceled)" : ""}`);
+    // Tooltips get an element, not a string: Leaflet puts a string in as HTML, and the names come
+    // from the feed.
+    line.bindTooltip(el("span", "", leg.kind === "walk" ? `walk ${leg.minutes} min` : `${leg.mode} ${leg.line}${canceled ? " (canceled)" : ""}`));
     line.addTo(drawn);
     bounds.push(...leg.path);
     // Small dots in the line's colour where the vehicle stops on the way.
@@ -505,13 +507,13 @@ function draw(journey, { fit = true } = {}) {
         fillOpacity: 1,
         className: "passed-stop",
       })
-        .bindTooltip(`${stop.arrival} ${stopName(stop)}`)
+        .bindTooltip(el("span", "", `${stop.arrival} ${stopName(stop)}`))
         .addTo(drawn);
     }
     // A dot where each leg starts, a bigger one at the end of the journey. They sit on the
     // stops themselves: a line drawn along the street may start a few metres beside the stop.
     L.circleMarker([leg.from.lat, leg.from.lon], { radius: i === 0 ? 7 : 5, color: "#1c2430", weight: 2, fillColor: "#fff", fillOpacity: 1 })
-      .bindTooltip(`${leg.departure} ${stopName(leg.from)}`)
+      .bindTooltip(el("span", "", `${leg.departure} ${stopName(leg.from)}`))
       .bindPopup(dotPopup(leg.from, leg.departure))
       .addTo(drawn);
   });
@@ -520,7 +522,7 @@ function draw(journey, { fit = true } = {}) {
   map.invalidateSize();
   const last = journey.legs[journey.legs.length - 1];
   L.circleMarker([last.to.lat, last.to.lon], { radius: 7, color: "#1c2430", weight: 2, fillColor: "#1c2430", fillOpacity: 1 })
-    .bindTooltip(`${last.arrival} ${stopName(last.to)}`)
+    .bindTooltip(el("span", "", `${last.arrival} ${stopName(last.to)}`))
     .bindPopup(dotPopup(last.to, last.arrival))
     .addTo(drawn);
   // Last, so they lie over every line and dot: where the journey may break.
@@ -585,12 +587,12 @@ function drawFallback(fallback) {
       lineCap: "round",
       className: "fallback-leg",
     })
-      .bindTooltip(`${lead}: ${ride ? `${leg.mode} ${leg.line} at ${leg.departure}` : `walk ${leg.minutes} min`}`)
+      .bindTooltip(el("span", "", `${lead}: ${ride ? `${leg.mode} ${leg.line} at ${leg.departure}` : `walk ${leg.minutes} min`}`))
       .addTo(drawn);
     points.push(...leg.path);
     if (!ride) continue;
     L.circleMarker([leg.from.lat, leg.from.lon], { radius: 4, color: lineColor, weight: 2, fillColor: "#fff", fillOpacity: 1, className: "fallback-stop" })
-      .bindTooltip(`${lead}: ${leg.departure} ${stopName(leg.from)}`)
+      .bindTooltip(el("span", "", `${lead}: ${leg.departure} ${stopName(leg.from)}`))
       .bindPopup(dotPopup(leg.from, leg.departure))
       .addTo(drawn);
   }
