@@ -492,14 +492,16 @@ select:focus-visible,
   grid-column: 2 / -1;
   font-size: 0.85rem;
 }
-/* "Show on map": a link's look, a button's job (it moves the map, it goes nowhere). */
-.leg .fallback .map-link {
+/* "Show on map", "Show stop on map": a link's look, a button's job (it moves the map, it goes nowhere). */
+.leg .map-link {
   border: 0;
   background: none;
   padding: 0;
   color: var(--accent);
   text-decoration: underline;
-  font-size: inherit;
+  font: inherit;
+  font-weight: 400; /* also under the bold red warning: a control, not part of it */
+  cursor: pointer;
 }
 
 /* Cancelled trips the journeys were planned around. */
