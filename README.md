@@ -165,7 +165,9 @@ node dist/bin.js stops --gtfs data/pid --search "nadrazi"
 node dist/bin.js departures --gtfs data/pid --stop "Anděl" --limit 8      # the next departures
 ```
 
-`--date` and `--time` default to now. `--window MIN` (default 60) is how far after `--time`
+`--date` and `--time` default to now, read in the feed's time zone (`agency_timezone` in
+`agency.txt`, Europe/Prague for PID; this machine's zone if the feed has none), so a server or a
+CI runner on UTC still plans for Prague's today and now. `--window MIN` (default 60) is how far after `--time`
 departures are considered; `--window 0` leaves as early as possible. `--list` prints every
 journey worth taking in the window instead of the best per number of transfers.
 `--step-free` keeps to step-free vehicles, stops and changes. The first run on a feed writes
@@ -281,7 +283,8 @@ echo "GOLEMIO_API_KEY=..." > .env      # .env is in .gitignore
 node --env-file-if-exists=.env dist/bin.js serve --gtfs data/pid
 ```
 - `GET /api/feed`: the timetable in use, `{"firstDate":"2026-11-09","lastDate":"2026-11-22",
-  "loadedAt":"2026-11-14T17:30:12.345Z"}`. The dates are `feed_start_date` and `feed_end_date`
+  "loadedAt":"2026-11-14T17:30:12.345Z","timeZone":"Europe/Prague"}`. `timeZone` is the zone
+  the timetable's dates and times are in, and the one "today" and "now" are taken in. The dates are `feed_start_date` and `feed_end_date`
   from `feed_info.txt`, or the first and last date with service in the calendar when the feed
   doesn't give them. For PID the calendar alone would say "until 12 Dec 2026": its train
   services run all year in `calendar.txt`, while the rest of the feed stops two weeks ahead.
@@ -384,8 +387,12 @@ chained-walk bug of 14 Nov (31 of 1,000 journeys differ from before the fix, and
 - Journeys are planned on the timetable; live delays (with a key) are shown on them and can
   flag a change at risk, but don't change which journeys are found. A delay is taken to last to
   where one gets off. Journeys of the day before, after midnight, get no live data.
-- No fares, or daylight-saving corrections (GTFS times are
-  measured from "noon minus 12 h", which differs from midnight on the two DST days).
+- No fares.
+- Times are shown as the timetable gives them. GTFS measures them from "noon minus 12 h", which
+  on the two daylight-saving days is 23:00 (March) or 01:00 (October) by the clock: "now", "today"
+  and the times asked of Golemio take that into account, but a time shown before the change on
+  those two nights is the timetable's, an hour off the clock. The page sends the device's date
+  and time; a device set to another zone than the feed's plans for its own clock.
 - Stops without times in `stop_times.txt` get times between the timed stops around them, by
   the distance travelled (`shape_dist_traveled`, else straight lines): on PID's real times,
   blanked at every other stop, that is 15 s off at the median (p90 43 s). Stops after the last

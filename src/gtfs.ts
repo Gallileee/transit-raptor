@@ -17,7 +17,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { readCsv } from "./csv.js";
 import { distanceMetres } from "./geo.js";
-import { addDays, DAY, dateKey, parseDate, parseTime, type ServiceDate, weekday } from "./time.js";
+import { addDays, DAY, dateKey, isTimeZone, parseDate, parseTime, type ServiceDate, weekday } from "./time.js";
 
 export class FeedError extends Error {}
 
@@ -174,6 +174,8 @@ export interface CompiledFeed {
   readonly pathways: Pathway[];
   /** feed_info.txt's feed_start_date and feed_end_date (YYYYMMDD), when it gives them. */
   readonly published: PublishedDates;
+  /** agency.txt's agency_timezone ("Europe/Prague"): the zone the times are in. Null if unknown. */
+  readonly timeZone: string | null;
   readonly stats: { stopTimesRead: number; tripsInFeed: number };
 }
 
@@ -195,6 +197,7 @@ export const FEED_FILES = [
   "pathways.txt",
   "shapes.txt",
   "feed_info.txt",
+  "agency.txt",
 ];
 
 const DAY_COLUMNS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
@@ -275,6 +278,21 @@ export function serviceRange(calendar: Calendar): ServiceRange | undefined {
   if (dateKey(first) > high) return undefined; // every date removed again
   while (servicesOn(calendar, last).size === 0) last = addDays(last, -1);
   return { first, last };
+}
+
+/**
+ * agency.txt's agency_timezone: GTFS requires every agency of a feed to give the same one, so the
+ * first known zone is it. Null when the file is missing or no row names a zone this runtime knows.
+ */
+export async function readTimeZone(dir: string): Promise<string | null> {
+  const path = join(dir, "agency.txt");
+  if (!existsSync(path)) return null;
+  let zone: string | null = null;
+  await readCsv(path, (row) => {
+    const name = row("agency_timezone").trim();
+    if (zone === null && isTimeZone(name)) zone = name;
+  });
+  return zone;
 }
 
 /** feed_info.txt (optional, one row): the period the feed is complete and reliable for. */
@@ -498,7 +516,19 @@ export async function compileFeed(dir: string): Promise<CompiledFeed> {
   }
 
   const published = await readPublishedDates(dir);
-  return { stops, routes, calendar, trips, columns, transfers, pathways, published, stats: { stopTimesRead, tripsInFeed } };
+  const timeZone = await readTimeZone(dir);
+  return {
+    stops,
+    routes,
+    calendar,
+    trips,
+    columns,
+    transfers,
+    pathways,
+    published,
+    timeZone,
+    stats: { stopTimesRead, tripsInFeed },
+  };
 }
 
 /**

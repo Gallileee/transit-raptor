@@ -1,5 +1,45 @@
 # Progress log
 
+## 2026-11-26 (scheduled run): the feed's time zone, and daylight saving
+
+Why: "today" and "now" (a plan or board without `date`/`time`, the CLI's defaults, the "is this
+board for now?" check for live delays) came from the machine's own clock and zone. On a server
+or CI runner set to UTC the planner was an hour or two behind Prague, and after 23:00 UTC it was
+on yesterday's date. Also, a board asked for at 24:05 sent Golemio `timeFrom=<same date>T00:05`,
+a day too early. The README listed "no daylight-saving corrections" as a limitation.
+
+Done (API and CLI; the page is unchanged):
+- `readTimeZone` (gtfs.ts): `agency_timezone` from `agency.txt` (first zone the runtime knows),
+  kept in `CompiledFeed.timeZone` and in the binary cache (format 5; `agency.txt` is now part of
+  the fingerprint). Feeds without one use this machine's zone, as before.
+- time.ts: `serviceDayStart` (noon minus 12 h in the zone, found from the offset at noon, so on
+  29 Mar 2026 it is 23:00 the evening before and on 25 Oct 01:00), `serviceSeconds`,
+  `instantOf`, `wallClock` (the timetable's 24:20 -> the next day's 00:20), `dateIn`,
+  `zoneOffset`, `isTimeZone`, `localZone`, all with `Intl.DateTimeFormat` (no dependency).
+- `Planner.when` gives the date and time of a request (today and now in the feed's zone, in the
+  timetable's terms); `liveWanted`, `liveFor` and `liveForJourneys` measure in the zone and send
+  Golemio `wallClock` times. `FeedInfo.timeZone` tells API clients which zone it is.
+- The CLI takes today and now in the feed's zone too.
+
+Verified: typecheck clean; 282 unit tests (19 new in tests/time-zone.test.ts) pass with the
+machine in Europe/Prague, UTC, America/Los_Angeles and Asia/Tokyo (`TZ=...`); 54 e2e (Edge)
+passed three runs in a row. (`TZ=UTC` e2e on Windows fails 6 departures tests on main too: Edge
+ignores `TZ`, so the page and the server are in different zones there; CI has both in UTC.)
+Mutations, 11 of 12 caught: day start at local midnight, today in the machine zone, old Golemio
+`from`, `liveWanted`/`liveForJourneys` in the machine zone, no zone validation, last zone wins,
+cache dropping the zone, feed zone ignored, CLI in the machine zone, date parsed after opening
+the feed. Left: the second offset correction in `serviceDayStart` (equivalent for every real
+zone: clocks change at night, so the offset at 12:00 UTC is the one at local noon).
+
+Next steps:
+1. The browser check on the real feed with the Golemio key (covers 2026-11-18, 11-20, 11-21).
+2. The page: take its default date and time (and the board's "now") in `feed.timeZone`
+   instead of the device's zone, for a phone still set to another zone.
+3. Show times on the two daylight-saving nights as the clock reads them (the timetable's 01:30
+   on 25 Oct is 02:30 by the clock): `wallClock` already does the conversion.
+4. Another feed with untimed stops, to try `interpolateTimes` on real gaps (download needs the
+   owner's approval).
+
 ## 2026-11-21 (scheduled run): "Show stop on map" under the warning
 
 Why: next step 2 ("tapping the warning in the list centres the map on the ring"). The ring was on

@@ -17,7 +17,7 @@ import { createAppServer } from "./server.js";
 import { GolemioRealtime } from "./realtime.js";
 import { Planner, RequestError } from "./service.js";
 import { StopIndex, type StopMatch } from "./stops.js";
-import { formatDate, parseClock, parseDate, type ServiceDate, TimeError } from "./time.js";
+import { dateIn, formatDate, localZone, parseClock, parseDate, serviceSeconds, TimeError } from "./time.js";
 import { buildTimetable } from "./timetable.js";
 
 const USAGE = `Usage:
@@ -131,13 +131,15 @@ async function run(argv: string[], io: Io): Promise<number> {
     });
   }
 
-  const now = io.now();
-  const date: ServiceDate = values.date
-    ? parseDate(values.date)
-    : { year: now.getFullYear(), month: now.getMonth() + 1, day: now.getDate() };
+  const asked = values.date ? parseDate(values.date) : undefined;
 
   const started = performance.now();
   const { compiled } = await openFeed(values.gtfs, { cacheDir, log: io.err, shapes: false });
+  // Today and now as the feed's clocks read them, wherever this runs.
+  const zone = compiled.timeZone ?? localZone();
+  const now = io.now();
+  const today = dateIn(now, zone);
+  const date = asked ?? today;
   const feed = feedForDate(compiled, date);
   const index = new StopIndex(feed.stops);
 
@@ -159,7 +161,8 @@ async function run(argv: string[], io: Io): Promise<number> {
   if (!Number.isInteger(window) || window < 0 || window > 24 * 60) {
     throw new UsageError("--window must be a whole number of minutes from 0 to 1440");
   }
-  const departAt = values.time ? parseClock(values.time) : now.getHours() * 3600 + now.getMinutes() * 60;
+  const nowSeconds = serviceSeconds(now, today, zone);
+  const departAt = values.time ? parseClock(values.time) : nowSeconds - (nowSeconds % 60);
   const from = resolve(index, values.from, "--from");
   const to = resolve(index, values.to, "--to");
 
@@ -201,7 +204,7 @@ async function serve(
   }
   const planner = withRealtime(new Planner(gtfs, io.now, 2, io.err, cacheDir), io);
   const started = performance.now();
-  await planner.load(planner.today()); // fail early on a bad feed, and make the first request fast (shapes too)
+  await planner.load(planner.today(await planner.zone())); // fail early on a bad feed, and make the first request fast (shapes too)
   io.err(`Loaded today's timetable in ${Math.round(performance.now() - started)} ms`);
   const server = createAppServer(planner, io.err);
   await new Promise<void>((resolveListen, reject) => {

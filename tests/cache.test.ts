@@ -119,10 +119,13 @@ describe("openFeed", () => {
 
   it("rebuilds when a file appears that wasn't there", async () => {
     const before = fingerprint(feedDir());
-    writeFileSync(join(feedDir(), "agency.txt"), "ignored\n"); // not a file it reads
+    writeFileSync(join(feedDir(), "fare_rules.txt"), "ignored\n"); // not a file it reads
     expect(fingerprint(feedDir())).toBe(before);
+    writeFileSync(join(feedDir(), "agency.txt"), "agency_timezone\nEurope/Prague\n"); // one it does
+    const withAgency = fingerprint(feedDir());
+    expect(withAgency).not.toBe(before);
     rmSync(join(feedDir(), "levels.txt"));
-    expect(fingerprint(feedDir())).not.toBe(before);
+    expect(fingerprint(feedDir())).not.toBe(withAgency);
   });
 
   it("reads the CSV files again when the cache is damaged, and repairs it", async () => {
