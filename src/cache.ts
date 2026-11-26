@@ -40,7 +40,7 @@ import {
 } from "./gtfs.js";
 import { Shapes } from "./shapes.js";
 
-export const FORMAT = 4;
+export const FORMAT = 5;
 const MAGIC = Buffer.from("TRCACHE\0", "latin1");
 const PREFIX = 24;
 
@@ -163,6 +163,7 @@ interface Header {
   transfers: [number, number, number][];
   pathways: [number, number, number, boolean, number | null, number][];
   published: CompiledFeed["published"];
+  timeZone: CompiledFeed["timeZone"];
   stats: CompiledFeed["stats"];
   shapeIds: string[];
   sections: Section[];
@@ -214,6 +215,7 @@ export function encode(compiled: CompiledFeed, shapes: Shapes, print: string): B
     transfers: compiled.transfers.map((t) => [t.from, t.to, t.seconds]),
     pathways: compiled.pathways.map((p) => [p.from, p.to, p.mode, p.bidirectional, p.seconds ?? null, p.stairs]),
     published: compiled.published,
+    timeZone: compiled.timeZone,
     stats: compiled.stats,
     shapeIds: shapes.columns.ids,
     sections: [],
@@ -330,6 +332,7 @@ export function decode(bytes: Buffer, print: string): { compiled: CompiledFeed; 
     transfers: header.transfers.map(([from, to, seconds]) => ({ from, to, seconds })),
     pathways,
     published: header.published,
+    timeZone: header.timeZone,
     stats: header.stats,
   };
   const shapes = Shapes.fromColumns({

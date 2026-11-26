@@ -8,7 +8,20 @@ import { earliestTrip, type Journey, type Leg, plan, profile } from "./raptor.js
 import { type LiveDeparture, type LiveQuery, liveKey, type Realtime, RealtimeError } from "./realtime.js";
 import { cut, type LatLon, type Shapes } from "./shapes.js";
 import { StopIndex, type StopMatch } from "./stops.js";
-import { DAY, formatClock, formatDate, minutesBetween, parseClock, parseDate, type ServiceDate } from "./time.js";
+import {
+  DAY,
+  dateIn,
+  formatClock,
+  formatDate,
+  instantOf,
+  localZone,
+  minutesBetween,
+  parseClock,
+  parseDate,
+  type ServiceDate,
+  serviceSeconds,
+  wallClock,
+} from "./time.js";
 import { buildTimetable, departure as departureAt, type Timetable, viaStreet } from "./timetable.js";
 
 /** Something the caller got wrong (an unknown stop, a malformed time): HTTP 400, not 500. */
@@ -44,6 +57,16 @@ export interface FeedInfo {
   lastDate: string;
   /** When this server loaded the feed (ISO 8601, UTC); a reload changes it. */
   loadedAt: string;
+  /**
+   * The zone the timetable's dates and times are in ("Europe/Prague"): agency.txt's, or this
+   * server's when the feed doesn't say. "Today" and "now" are taken in it.
+   */
+  timeZone: string;
+}
+
+/** The zone a feed's times are in: its own, else this machine's. */
+function zoneOf(opened: OpenedFeed): string {
+  return opened.compiled.timeZone ?? localZone();
 }
 
 /** One FeedInfo per opened feed, made when the first date is loaded from it. */
@@ -57,6 +80,7 @@ function feedInfo(opened: OpenedFeed, now: Date): FeedInfo {
       firstDate: range ? formatDate(range.first) : "",
       lastDate: range ? formatDate(range.last) : "",
       loadedAt: now.toISOString(),
+      timeZone: zoneOf(opened),
     };
     infos.set(opened, info);
   }
@@ -387,7 +411,7 @@ export class Planner {
       }
       const fresh = new Planner(this.gtfsDir, this.now, this.keep, this.log);
       fresh.opened = Promise.resolve(opened);
-      const today = fresh.today();
+      const today = fresh.today(zoneOf(opened));
       const loaded = await fresh.load(today); // ready before anyone uses it
       this.opened = fresh.opened;
       this.print = now;
@@ -405,9 +429,28 @@ export class Planner {
     }
   }
 
-  today(): ServiceDate {
-    const now = this.now();
-    return { year: now.getFullYear(), month: now.getMonth() + 1, day: now.getDate() };
+  /** Today's date in `zone` (the feed's; see zone()). */
+  today(zone: string): ServiceDate {
+    return dateIn(this.now(), zone);
+  }
+
+  /** The zone the feed's times are in (opening the feed if no request has yet). */
+  async zone(): Promise<string> {
+    return zoneOf(await this.open());
+  }
+
+  /**
+   * The date and time a request asks about: the ones it gives, else today and now in the
+   * feed's zone. "Now" is in the timetable's terms (seconds of today's service day, to the
+   * minute), so on a daylight-saving day it differs from the clock before the change.
+   */
+  private async when(date: string | undefined, time: string | undefined): Promise<{ date: ServiceDate; at: number; zone: string }> {
+    const asked = date ? parseDate(date) : undefined; // a bad date or time before the feed's errors
+    const clock = time ? parseClock(time) : undefined;
+    const zone = await this.zone();
+    const today = this.today(zone);
+    const now = serviceSeconds(this.now(), today, zone);
+    return { date: asked ?? today, at: clock ?? now - (now % 60), zone };
   }
 
   /** The timetable in use (opening the feed if no request has yet). */
@@ -417,7 +460,7 @@ export class Planner {
 
   /** Stop names for an autocomplete box. */
   async stops(text: string, date?: string): Promise<string[]> {
-    const { index } = await this.load(date ? parseDate(date) : this.today());
+    const { index } = await this.load(date ? parseDate(date) : this.today(await this.zone()));
     const match = index.find(text, 10);
     return match.kind === "found" ? [match.name] : match.kind === "ambiguous" ? match.names : match.suggestions;
   }
@@ -427,9 +470,7 @@ export class Planner {
    * that lets passengers on there and goes on (a trip ending there is an arrival, not listed).
    */
   async departures(request: DeparturesRequest): Promise<DeparturesResponse> {
-    const date = request.date ? parseDate(request.date) : this.today();
-    const now = this.now();
-    const from = request.time ? parseClock(request.time) : now.getHours() * 3600 + now.getMinutes() * 60;
+    const { date, at: from, zone } = await this.when(request.date, request.time);
     const limit = request.limit ?? 20;
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new RequestError("limit must be a whole number from 1 to 100");
     const window = request.window ?? 120;
@@ -440,7 +481,7 @@ export class Planner {
     const stop = resolve(loaded.index, request.stop, "stop");
     const { feed, timetable } = loaded;
     const until = from + window * 60;
-    const live = this.liveWanted(date, from);
+    const live = this.liveWanted(date, from, zone);
     const start = live ? from - LATE_LOOKBACK : from;
     const found: {
       at: number;
@@ -477,7 +518,7 @@ export class Planner {
       }
     }
     const { known, state } = live
-      ? await this.liveFor(this.realtime!, date, from, window, limit, stop.stops.map((s) => feed.stops[s]!.id))
+      ? await this.liveFor(this.realtime!, date, from, zone, window, limit, stop.stops.map((s) => feed.stops[s]!.id))
       : { known: new Map<string, LiveDeparture>(), state: "off" as const };
     const departures = found
       .map(({ at, key, json }) => {
@@ -513,17 +554,17 @@ export class Planner {
   }
 
   /** Whether a board gets live delays: a source is set and the board is for now. */
-  private liveWanted(date: ServiceDate, from: number): boolean {
+  private liveWanted(date: ServiceDate, from: number, zone: string): boolean {
     if (!this.realtime) return false;
-    const asked = new Date(date.year, date.month - 1, date.day, 0, 0, from);
+    const asked = instantOf(date, from, zone);
     return Math.abs(asked.getTime() - this.now().getTime()) <= LIVE_WITHIN * 1000;
   }
 
   /** Live delays for a board. Never throws for the source failing. */
-  private liveFor(realtime: Realtime, date: ServiceDate, from: number, window: number, limit: number, stopIds: string[]) {
+  private liveFor(realtime: Realtime, date: ServiceDate, from: number, zone: string, window: number, limit: number, stopIds: string[]) {
     return this.ask(realtime, {
       stopIds,
-      from: `${formatDate(date)}T${formatClock(from).slice(0, 5)}:00`,
+      from: wallClock(date, from - (from % 60), zone),
       before: LATE_LOOKBACK / 60,
       minutes: window,
       // Golemio counts departures over all the platforms, and may order them a little
@@ -550,9 +591,7 @@ export class Planner {
   }
 
   async plan(request: PlanRequest): Promise<PlanResponse> {
-    const date = request.date ? parseDate(request.date) : this.today();
-    const now = this.now();
-    const departAt = request.time ? parseClock(request.time) : now.getHours() * 3600 + now.getMinutes() * 60;
+    const { date, at: departAt, zone } = await this.when(request.date, request.time);
     const window = request.window ?? 60;
     if (!Number.isInteger(window) || window < 0 || window > 24 * 60) {
       throw new RequestError("window must be a whole number of minutes from 0 to 1440");
@@ -576,7 +615,7 @@ export class Planner {
     for (let round = 0; ; round++) {
       const search = { ...query, skip };
       journeys = request.list ? profile(timetable, search) : plan(timetable, search);
-      live = await this.liveForJourneys(date, journeys, loaded.feed);
+      live = await this.liveForJourneys(date, zone, journeys, loaded.feed);
       if (round >= REPLANS) break;
       // Skipped trips can't come back, so these are new.
       const cancelled = cancelledRides(loaded, journeys, live.known);
@@ -608,12 +647,10 @@ export class Planner {
    * Live delays for the rides of these journeys that leave within the next hour: one question
    * for all the stops where they get on.
    */
-  private async liveForJourneys(date: ServiceDate, journeys: Journey[], feed: Feed) {
+  private async liveForJourneys(date: ServiceDate, zone: string, journeys: Journey[], feed: Feed) {
     const none = { known: new Map<string, LiveDeparture>(), state: "off" as const };
     if (!this.realtime) return none;
-    const now = this.now();
-    const midnight = new Date(date.year, date.month - 1, date.day).getTime();
-    const nowSeconds = Math.floor((now.getTime() - midnight) / 1000);
+    const nowSeconds = serviceSeconds(this.now(), date, zone);
     if (nowSeconds < 0 || nowSeconds >= DAY) return none; // a journey on another day
     const soon = journeys
       .flatMap((j) => j.legs)
@@ -623,7 +660,7 @@ export class Planner {
     const minute = nowSeconds - (nowSeconds % 60);
     return this.ask(this.realtime, {
       stopIds,
-      from: `${formatDate(date)}T${formatClock(minute)}:00`,
+      from: wallClock(date, minute, zone),
       before: LIVE_WITHIN / 60,
       minutes: JOURNEY_HORIZON / 60 + 1,
       limit: 1000,

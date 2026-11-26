@@ -13,7 +13,7 @@ import { coverageNote } from "../src/format.js";
 import { type Calendar, type CalendarEntry, coveredDates, readCalendar, serviceRange } from "../src/gtfs.js";
 import { createAppServer } from "../src/server.js";
 import { Planner } from "../src/service.js";
-import { formatDate, parseDate } from "../src/time.js";
+import { formatDate, localZone, parseDate } from "../src/time.js";
 
 const MINI = join(import.meta.dirname, "fixtures", "mini");
 
@@ -114,14 +114,14 @@ describe("the timetable in use", () => {
   const planner = new Planner(MINI, () => clock);
 
   it("says which dates it covers and when it was loaded", async () => {
-    expect(await planner.feed()).toEqual({ firstDate: "2026-11-02", lastDate: "2026-11-30", loadedAt: clock.toISOString() });
+    expect(await planner.feed()).toEqual({ firstDate: "2026-11-02", lastDate: "2026-11-30", loadedAt: clock.toISOString(), timeZone: localZone() });
   });
 
   it("comes with every plan answer, and keeps its load time", async () => {
     const loadedAt = clock.toISOString();
     clock = new Date(2026, 10, 10, 9, 0);
     const answer = await planner.plan({ from: "Alpha", to: "Delta", date: "2026-11-11", time: "08:00" });
-    expect(answer.feed).toEqual({ firstDate: "2026-11-02", lastDate: "2026-11-30", loadedAt });
+    expect(answer.feed).toEqual({ firstDate: "2026-11-02", lastDate: "2026-11-30", loadedAt, timeZone: localZone() });
   });
 
   describe("after a new download", () => {
@@ -140,7 +140,7 @@ describe("the timetable in use", () => {
       now = new Date(2026, 10, 10, 12, 0);
       expect(await reloading.checkForNewFeed()).toBe("waiting");
       expect(await reloading.checkForNewFeed()).toBe("reloaded");
-      const fresh = { firstDate: "2026-11-02", lastDate: "2026-12-07", loadedAt: now.toISOString() };
+      const fresh = { firstDate: "2026-11-02", lastDate: "2026-12-07", loadedAt: now.toISOString(), timeZone: localZone() };
       expect(await reloading.feed()).toEqual(fresh);
       expect((await reloading.plan({ from: "Alpha", to: "Delta", date: "2026-11-10", time: "08:00" })).feed).toEqual(fresh);
     });
@@ -156,7 +156,7 @@ describe("GET /api/feed", () => {
     const response = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/api/feed`);
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
-    expect(await response.json()).toEqual({ firstDate: "2026-11-02", lastDate: "2026-11-30", loadedAt: "2026-11-10T06:58:00.000Z" });
+    expect(await response.json()).toEqual({ firstDate: "2026-11-02", lastDate: "2026-11-30", loadedAt: "2026-11-10T06:58:00.000Z", timeZone: localZone() });
   });
 });
 

@@ -82,3 +82,96 @@ export function weekday(date: ServiceDate): number {
 export function formatDate(date: ServiceDate): string {
   return `${date.year}-${String(date.month).padStart(2, "0")}-${String(date.day).padStart(2, "0")}`;
 }
+
+/*
+ * Time zones. A feed's times are local to agency.txt's agency_timezone, whatever zone the
+ * machine running this is in. A service day starts at "noon minus 12 hours": on the two
+ * daylight-saving days that is 23:00 or 01:00 by the clock, not midnight.
+ */
+
+/** The zone this machine is set to, for feeds that don't name one. */
+export function localZone(): string {
+  return new Intl.DateTimeFormat().resolvedOptions().timeZone;
+}
+
+/** Whether `name` is an IANA time zone this runtime knows ("Europe/Prague"). */
+export function isTimeZone(name: string): boolean {
+  if (!name.trim()) return false;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: name });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const formatters = new Map<string, Intl.DateTimeFormat>();
+
+/** The date and the seconds since midnight that a clock in `zone` shows at an instant. */
+function clockIn(ms: number, zone: string): { date: ServiceDate; seconds: number } {
+  let formatter = formatters.get(zone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone: zone,
+      hourCycle: "h23",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+    formatters.set(zone, formatter);
+  }
+  const part: Partial<Record<Intl.DateTimeFormatPartTypes, number>> = {};
+  for (const p of formatter.formatToParts(ms)) if (p.type !== "literal") part[p.type] = Number(p.value);
+  return {
+    date: { year: part.year!, month: part.month!, day: part.day! },
+    seconds: part.hour! * 3600 + part.minute! * 60 + part.second!,
+  };
+}
+
+/** How far `zone`'s clocks are ahead of UTC at an instant, in seconds (Prague: 3600 or 7200). */
+export function zoneOffset(ms: number, zone: string): number {
+  const { date, seconds } = clockIn(ms, zone);
+  const asUtc = Date.UTC(date.year, date.month - 1, date.day) + seconds * 1000;
+  return (asUtc - Math.floor(ms / 1000) * 1000) / 1000;
+}
+
+/** The date a clock in `zone` shows at an instant. */
+export function dateIn(instant: Date, zone: string): ServiceDate {
+  return clockIn(instant.getTime(), zone).date;
+}
+
+/**
+ * When a service day starts (its 00:00:00 in GTFS terms), as epoch milliseconds: noon in `zone`
+ * minus 12 hours. Noon is never skipped or repeated by a clock change, so it is found by
+ * correcting a guess with the offset at noon.
+ */
+export function serviceDayStart(date: ServiceDate, zone: string): number {
+  const noonUtc = Date.UTC(date.year, date.month - 1, date.day, 12);
+  let noon = noonUtc - zoneOffset(noonUtc, zone) * 1000;
+  noon = noonUtc - zoneOffset(noon, zone) * 1000;
+  return noon - 12 * 3600 * 1000;
+}
+
+/** An instant as seconds of `date`'s service day (negative before it, above 86 400 after). */
+export function serviceSeconds(instant: Date, date: ServiceDate, zone: string): number {
+  return Math.floor((instant.getTime() - serviceDayStart(date, zone)) / 1000);
+}
+
+/** The instant a time of `date`'s service day is. */
+export function instantOf(date: ServiceDate, seconds: number, zone: string): Date {
+  return new Date(serviceDayStart(date, zone) + seconds * 1000);
+}
+
+/**
+ * A time of `date`'s service day as `zone`'s clock reads it, "2026-11-10T08:05:00": the form
+ * Golemio's timeFrom takes. 24:20:00 is the next day's 00:20.
+ */
+export function wallClock(date: ServiceDate, seconds: number, zone: string): string {
+  const clock = clockIn(serviceDayStart(date, zone) + seconds * 1000, zone);
+  const s = clock.seconds;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${formatDate(clock.date)}T${pad(Math.floor(s / 3600))}:${pad(Math.floor((s % 3600) / 60))}:${pad(s % 60)}`;
+}
